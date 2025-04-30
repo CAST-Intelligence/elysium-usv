@@ -14,7 +14,7 @@ flowchart TD
     GS -->|Validate & Process| ABS[Azure Blob Storage]
     ABS --> DPS[Data Pipeline Service]
     
-    subgraph "Azure Infrastructure (Australia Region)"
+    subgraph "Azure Infrastructure - Australia Region"
         GS
         ABS
         DPS
@@ -48,9 +48,9 @@ flowchart TD
     AL -.->|Monitor| DPS
     AL -.->|Monitor| S3
     
-    classDef azure fill:#0072C6,color:white;
-    classDef aws fill:#FF9900,color:white;
-    classDef usv fill:#00A170,color:white;
+    classDef azure fill:#0072C6,color:white,stroke:none;
+    classDef aws fill:#FF9900,color:white,stroke:none;
+    classDef usv fill:#00A170,color:white,stroke:none;
     
     class GS,ABS,DPS,AAC,AS,AL azure;
     class S3,S3P1,S3P2 aws;
