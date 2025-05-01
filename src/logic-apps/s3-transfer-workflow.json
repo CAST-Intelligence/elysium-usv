@@ -59,159 +59,18 @@
                         }
                     },
                     "actions": {
-                        "Get_AWS_Credentials": {
+                        "Placeholder": {
                             "runAfter": {},
-                            "type": "Function",
-                            "inputs": {
-                                "function": {
-                                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/YOUR-RESOURCE-GROUP/providers/Microsoft.Web/sites/', parameters('functionAppName'), '/functions/AWSAuthenticationFunction')]"
-                                },
-                                "method": "POST",
-                                "body": {
-                                    "vesselId": "@triggerBody()['vesselId']",
-                                    "operation": "upload"
-                                }
-                            }
-                        },
-                        "Get_blob_content": {
-                            "runAfter": {
-                                "Get_AWS_Credentials": [
-                                    "Succeeded"
-                                ]
-                            },
-                            "type": "ApiConnection",
-                            "inputs": {
-                                "host": {
-                                    "connection": {
-                                        "name": "@parameters('$connections')['azureblob']['connectionId']"
-                                    }
-                                },
-                                "method": "get",
-                                "path": "/datasets/default/files/@{encodeURIComponent(encodeURIComponent(triggerBody()?['blobName']))}/content",
-                                "queries": {
-                                    "inferContentType": true
-                                }
-                            }
-                        },
-                        "Upload_to_S3": {
-                            "runAfter": {
-                                "Get_blob_content": [
-                                    "Succeeded"
-                                ]
-                            },
-                            "type": "Http",
-                            "inputs": {
-                                "method": "PUT",
-                                "uri": "@concat('https://s3.amazonaws.com/', body('Get_AWS_Credentials')['bucket'], '/', body('Get_AWS_Credentials')['prefix'], '/', last(split(triggerBody()?['blobName'], '/')))",
-                                "headers": {
-                                    "x-amz-date": "@utcNow('r')",
-                                    "x-amz-content-sha256": "@body('Get_AWS_Credentials')['contentHash']",
-                                    "Authorization": "@body('Get_AWS_Credentials')['authHeader']"
-                                },
-                                "body": "@body('Get_blob_content')"
-                            }
-                        },
-                        "Update_blob_metadata": {
-                            "runAfter": {
-                                "Verify_S3_upload": [
-                                    "Succeeded"
-                                ]
-                            },
-                            "type": "Function",
-                            "inputs": {
-                                "function": {
-                                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/YOUR-RESOURCE-GROUP/providers/Microsoft.Web/sites/', parameters('functionAppName'), '/functions/UpdateBlobMetadata')]"
-                                },
-                                "method": "POST",
-                                "body": {
-                                    "blobName": "@triggerBody()['blobName']",
-                                    "metadata": {
-                                        "transferStatus": "transferred",
-                                        "transferTimestamp": "@utcNow()",
-                                        "s3Destination": "@concat(body('Get_AWS_Credentials')['bucket'], '/', body('Get_AWS_Credentials')['prefix'], '/', last(split(triggerBody()?['blobName'], '/')))"
-                                    }
-                                }
-                            }
-                        },
-                        "Verify_S3_upload": {
-                            "runAfter": {
-                                "Upload_to_S3": [
-                                    "Succeeded"
-                                ]
-                            },
-                            "type": "Http",
-                            "inputs": {
-                                "method": "HEAD",
-                                "uri": "@concat('https://s3.amazonaws.com/', body('Get_AWS_Credentials')['bucket'], '/', body('Get_AWS_Credentials')['prefix'], '/', last(split(triggerBody()?['blobName'], '/')))",
-                                "headers": {
-                                    "x-amz-date": "@utcNow('r')",
-                                    "Authorization": "@body('Get_AWS_Credentials')['verifyAuthHeader']"
-                                }
-                            }
-                        },
-                        "Log_transfer": {
-                            "runAfter": {
-                                "Update_blob_metadata": [
-                                    "Succeeded"
-                                ]
-                            },
-                            "type": "ApiConnection",
-                            "inputs": {
-                                "host": {
-                                    "connection": {
-                                        "name": "@parameters('$connections')['azuretables']['connectionId']"
-                                    }
-                                },
-                                "method": "post",
-                                "path": "/Tables/@{encodeURIComponent('DataTransferLog')}/entities",
-                                "body": {
-                                    "PartitionKey": "@triggerBody()['vesselId']",
-                                    "RowKey": "@guid()",
-                                    "BlobName": "@triggerBody()['blobName']",
-                                    "TransferTimestamp": "@utcNow()",
-                                    "S3Destination": "@concat(body('Get_AWS_Credentials')['bucket'], '/', body('Get_AWS_Credentials')['prefix'], '/', last(split(triggerBody()?['blobName'], '/')))",
-                                    "Status": "Success"
-                                }
-                            }
-                        },
-                        "Return_success_response": {
-                            "runAfter": {
-                                "Log_transfer": [
-                                    "Succeeded"
-                                ]
-                            },
                             "type": "Response",
                             "inputs": {
                                 "statusCode": 200,
                                 "body": {
-                                    "status": "success",
-                                    "message": "File successfully transferred to S3",
-                                    "details": {
-                                        "blobName": "@triggerBody()['blobName']",
-                                        "s3Destination": "@concat(body('Get_AWS_Credentials')['bucket'], '/', body('Get_AWS_Credentials')['prefix'], '/', last(split(triggerBody()?['blobName'], '/')))",
-                                        "transferTimestamp": "@utcNow()"
-                                    }
+                                    "status": "This is a placeholder S3 transfer Logic App. It will be replaced with the full implementation."
                                 }
                             }
                         }
                     },
                     "outputs": {}
-                },
-                "parameters": {
-                    "$connections": {
-                        "value": {
-                            "azureblob": {
-                                "connectionId": "[resourceId('Microsoft.Web/connections', 'azureblob')]",
-                                "connectionName": "azureblob",
-                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/azureblob')]"
-                            },
-                            "azuretables": {
-                                "connectionId": "[resourceId('Microsoft.Web/connections', 'azuretables')]",
-                                "connectionName": "azuretables",
-                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/azuretables')]"
-                            }
-                        }
-                    }
                 }
             }
         }

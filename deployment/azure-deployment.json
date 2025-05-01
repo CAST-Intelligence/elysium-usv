@@ -55,10 +55,8 @@
                 "allowBlobPublicAccess": false,
                 "minimumTlsVersion": "TLS1_2",
                 "networkAcls": {
-                    "defaultAction": "Deny",
-                    "bypass": "AzureServices",
-                    "ipRules": [],
-                    "virtualNetworkRules": []
+                    "defaultAction": "Allow",
+                    "bypass": "AzureServices"
                 }
             }
         },
@@ -76,6 +74,21 @@
             }
         },
         {
+            "type": "Microsoft.OperationalInsights/workspaces",
+            "apiVersion": "2021-06-01",
+            "name": "[concat(variables('baseName'), '-law')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "sku": {
+                    "name": "PerGB2018"
+                },
+                "retentionInDays": 30,
+                "features": {
+                    "enableLogAccessUsingOnlyResourcePermissions": true
+                }
+            }
+        },
+        {
             "type": "Microsoft.Insights/components",
             "apiVersion": "2020-02-02",
             "name": "[variables('appInsightsName')]",
@@ -83,8 +96,12 @@
             "kind": "web",
             "properties": {
                 "Application_Type": "web",
+                "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', concat(variables('baseName'), '-law'))]",
                 "Request_Source": "IbizaAIExtension"
-            }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', concat(variables('baseName'), '-law'))]"
+            ]
         },
         {
             "type": "Microsoft.KeyVault/vaults",
@@ -251,6 +268,14 @@
         "keyVaultName": {
             "type": "string",
             "value": "[variables('keyVaultName')]"
+        },
+        "logAnalyticsWorkspaceName": {
+            "type": "string",
+            "value": "[concat(variables('baseName'), '-law')]"
+        },
+        "applicationInsightsName": {
+            "type": "string",
+            "value": "[variables('appInsightsName')]"
         }
     }
 }
