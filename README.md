@@ -10,23 +10,23 @@ The pipeline architecture connects SeaSats USVs via Starlink to an Azure-hosted 
 
 ```mermaid
 flowchart TD
-    USV[SeaSats USV] -->|Starlink| GS[Ground Station Server]
-    GS -->|Validate & Process| ABS[Azure Blob Storage]
-    ABS --> DPS[Data Pipeline Service]
+    USV(SeaSats USV) -->|Starlink| GS(Ground Station Server)
+    GS -->|Validate & Process| ABS(Azure Blob Storage)
+    ABS --> DPS(Data Pipeline Service)
     
-    subgraph "Azure Infrastructure - Australia Region"
+    subgraph AZ["`Azure Infrastructure - **Australia Region**`"]
         GS
         ABS
         DPS
-        AAC[Authentication & Access Control]
-        AS[Audit System]
-        AL[Alerting Service]
+        AAC(Authentication & Access Control)
+        AS(Audit System)
+        AL(Alerting Service)
     end
     
     subgraph "AWS (Revelare)"
-        S3[AWS S3 Bucket]
-        S3P1[Vessel 1 Prefix]
-        S3P2[Vessel 2 Prefix]
+        S3(AWS S3 Bucket)
+        S3P1(Vessel 1 Prefix)
+        S3P2(Vessel 2 Prefix)
         S3 --- S3P1
         S3 --- S3P2
     end
