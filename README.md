@@ -73,7 +73,9 @@ sequenceDiagram
     participant AS as Audit System
     
     USV->>GS: Transmit survey data via Starlink
-    GS->>AS: Log data receipt
+    USV->>GS: Transmit checksums for verification
+    GS-->>USV: Confirm data integrity
+    GS->>AS: Log data receipt with integrity status
     GS->>GS: Validate & preprocess data
     GS->>ABS: Store data with vessel ID & timestamp
     ABS->>AS: Log storage operation
