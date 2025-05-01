@@ -1,0 +1,226 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "workflows_name": {
+            "defaultValue": "usv-data-cleanup",
+            "type": "String"
+        },
+        "location": {
+            "defaultValue": "australiaeast",
+            "type": "String"
+        },
+        "storageName": {
+            "defaultValue": "usvdatastorage",
+            "type": "String"
+        },
+        "retentionDays": {
+            "defaultValue": 7,
+            "type": "int"
+        }
+    },
+    "variables": {
+        "storageConnectionString": "[concat('DefaultEndpointsProtocol=https;AccountName=', parameters('storageName'), ';EndpointSuffix=core.windows.net')]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('workflows_name')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        },
+                        "retentionDays": {
+                            "defaultValue": "[parameters('retentionDays')]",
+                            "type": "Int"
+                        }
+                    },
+                    "triggers": {
+                        "Schedule": {
+                            "recurrence": {
+                                "frequency": "Day",
+                                "interval": 1,
+                                "schedule": {
+                                    "hours": [
+                                        "3"
+                                    ]
+                                },
+                                "timeZone": "Australia/Sydney"
+                            },
+                            "type": "Recurrence"
+                        }
+                    },
+                    "actions": {
+                        "Get_blobs_for_cleanup": {
+                            "runAfter": {},
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azureblob']['connectionId']"
+                                    }
+                                },
+                                "method": "get",
+                                "path": "/datasets/default/foldersV2/@{encodeURIComponent(encodeURIComponent('usvdata'))}",
+                                "queries": {
+                                    "useFlatListing": true
+                                }
+                            }
+                        },
+                        "For_each_blob": {
+                            "foreach": "@body('Get_blobs_for_cleanup')?.value",
+                            "actions": {
+                                "Get_blob_metadata": {
+                                    "runAfter": {},
+                                    "type": "ApiConnection",
+                                    "inputs": {
+                                        "host": {
+                                            "connection": {
+                                                "name": "@parameters('$connections')['azureblob']['connectionId']"
+                                            }
+                                        },
+                                        "method": "get",
+                                        "path": "/datasets/default/files/@{encodeURIComponent(encodeURIComponent(items('For_each_blob')?.Name))}",
+                                        "queries": {
+                                            "inferContentType": false
+                                        }
+                                    }
+                                },
+                                "Check_if_ready_for_cleanup": {
+                                    "actions": {
+                                        "Check_metadata_for_transfer_status": {
+                                            "actions": {
+                                                "Generate_audit_certificate": {
+                                                    "runAfter": {},
+                                                    "type": "Function",
+                                                    "inputs": {
+                                                        "function": {
+                                                            "id": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/YOUR-RESOURCE-GROUP/providers/Microsoft.Web/sites/usv-validation-functions/functions/GenerateAuditCertificate')]"
+                                                        },
+                                                        "method": "POST",
+                                                        "body": {
+                                                            "blobName": "@items('For_each_blob')?.Name",
+                                                            "metadata": "@body('Get_blob_metadata')?['Metadata']",
+                                                            "transferTimestamp": "@body('Get_blob_metadata')?['Metadata']?['transferTimestamp']",
+                                                            "s3Destination": "@body('Get_blob_metadata')?['Metadata']?['s3Destination']"
+                                                        }
+                                                    }
+                                                },
+                                                "Delete_blob": {
+                                                    "runAfter": {
+                                                        "Generate_audit_certificate": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "ApiConnection",
+                                                    "inputs": {
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['azureblob']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "delete",
+                                                        "path": "/datasets/default/files/@{encodeURIComponent(encodeURIComponent(items('For_each_blob')?.Name))}"
+                                                    }
+                                                },
+                                                "Log_deletion": {
+                                                    "runAfter": {
+                                                        "Delete_blob": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "ApiConnection",
+                                                    "inputs": {
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['azuretables']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "post",
+                                                        "path": "/Tables/@{encodeURIComponent('DataDeletionLog')}/entities",
+                                                        "body": {
+                                                            "PartitionKey": "@body('Get_blob_metadata')?['Metadata']?['vesselId']",
+                                                            "RowKey": "@guid()",
+                                                            "BlobName": "@items('For_each_blob')?.Name",
+                                                            "DeletionTimestamp": "@utcNow()",
+                                                            "S3Destination": "@body('Get_blob_metadata')?['Metadata']?['s3Destination']",
+                                                            "CertificateId": "@body('Generate_audit_certificate')?['certificateId']"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "runAfter": {},
+                                            "expression": {
+                                                "and": [
+                                                    {
+                                                        "equals": [
+                                                            "@body('Get_blob_metadata')?['Metadata']?['transferStatus']",
+                                                            "transferred"
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            "type": "If"
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "Get_blob_metadata": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "expression": {
+                                        "and": [
+                                            {
+                                                "lessOrEquals": [
+                                                    "@addDays(formatDateTime(body('Get_blob_metadata')?['Metadata']?['transferTimestamp'], 'yyyy-MM-dd'), 0)",
+                                                    "@addDays(utcNow(), parameters('retentionDays') * -1)"
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    "type": "If"
+                                }
+                            },
+                            "runAfter": {
+                                "Get_blobs_for_cleanup": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach",
+                            "runtimeConfiguration": {
+                                "concurrency": {
+                                    "repetitions": 10
+                                }
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "azureblob": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', 'azureblob')]",
+                                "connectionName": "azureblob",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/azureblob')]"
+                            },
+                            "azuretables": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', 'azuretables')]",
+                                "connectionName": "azuretables",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/azuretables')]"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}

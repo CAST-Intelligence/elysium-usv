@@ -130,8 +130,83 @@ sequenceDiagram
 
 This repository contains the code and configuration for implementing the complete data pipeline, including:
 
-- Azure infrastructure as code (Terraform/ARM templates)
+- Azure infrastructure as code (ARM templates)
 - Data pipeline services and validation logic
 - AWS S3 integration components
 - Monitoring and auditing tools
 - Documentation and operational guides
+
+## Hybrid Implementation Architecture
+
+This solution uses a hybrid approach combining Azure Functions and Logic Apps:
+
+### Azure Functions Components
+- **Data Validation Function**: Blob-triggered function that validates data integrity with checksum verification
+- **AWS Authentication Function**: Generates secure, vessel-specific credentials for S3 access
+- **Generate Audit Certificate Function**: Creates compliance records for data destruction certification
+
+### Logic App Workflows
+- **Master Orchestration Workflow**: Coordinates the end-to-end pipeline execution
+- **S3 Transfer Workflow**: Manages secure transfer of validated data to AWS S3
+- **Cleanup Workflow**: Handles data retention policies and certified data destruction
+
+## Development & Deployment
+
+### Prerequisites
+- Azure CLI installed and authenticated
+- Azure subscription with permissions to create resources
+- Access to AWS account for S3 bucket (for production)
+
+### Local Development Setup
+1. Install Python 3.9+ and required packages:
+   ```
+   pip install -r src/functions/requirements.txt
+   pip install -r tools/requirements.txt
+   ```
+
+2. Set up Azure Function Core Tools for local testing.
+
+3. For local testing, set the connection string:
+   ```
+   export AZURE_STORAGE_CONNECTION_STRING="your_storage_connection_string"
+   ```
+
+### Testing with Mock Data
+Use the mock data generator to simulate USV data:
+
+```bash
+python tools/mock-data-generator.py --count 10 --interval 5
+```
+
+Options:
+- `--count`: Number of files to generate
+- `--min-size`/`--max-size`: File size range in KB
+- `--corrupt`: Percentage of files to corrupt (for testing validation)
+- `--interval`: Seconds between uploads (simulates real data flow)
+- `--vessel-id`: Vessel identifier
+
+### Deployment
+Deploy using the included deployment script:
+
+```bash
+cd deployment
+chmod +x deploy.sh
+./deploy.sh -g your-resource-group -e dev
+```
+
+Options:
+- `-g`: Resource group name (required)
+- `-e`: Environment (dev, test, prod)
+- `-l`: Azure region location (default: australiaeast)
+
+The script:
+1. Creates/updates resources using ARM templates
+2. Deploys all Azure Functions
+3. Deploys Logic App workflows
+4. Sets up necessary connections
+
+## Monitoring & Maintenance
+
+- Use Azure Application Insights for monitoring function performance
+- View Logic App run history for workflow execution details
+- Audit logs are stored in Azure Table Storage for compliance records

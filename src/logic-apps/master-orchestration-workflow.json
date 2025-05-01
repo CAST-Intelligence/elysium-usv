@@ -1,0 +1,179 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "workflows_name": {
+            "defaultValue": "usv-data-orchestrator",
+            "type": "String"
+        },
+        "location": {
+            "defaultValue": "australiaeast",
+            "type": "String"
+        },
+        "storageName": {
+            "defaultValue": "usvdatastorage",
+            "type": "String"
+        },
+        "functionAppName": {
+            "defaultValue": "usv-validation-functions",
+            "type": "String"
+        }
+    },
+    "variables": {
+        "storageConnectionString": "[concat('DefaultEndpointsProtocol=https;AccountName=', parameters('storageName'), ';EndpointSuffix=core.windows.net')]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('workflows_name')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Recurrence": {
+                            "recurrence": {
+                                "frequency": "Hour",
+                                "interval": 1
+                            },
+                            "type": "Recurrence"
+                        }
+                    },
+                    "actions": {
+                        "Get_pending_files_from_queue": {
+                            "runAfter": {},
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azurequeues']['connectionId']"
+                                    }
+                                },
+                                "method": "get",
+                                "path": "/v2/storageAccounts/@{encodeURIComponent(encodeURIComponent(variables('storageAccountName')))}/queues/@{encodeURIComponent('validated-data-queue')}/messages",
+                                "queries": {
+                                    "numberOfMessages": 32
+                                }
+                            }
+                        },
+                        "For_each_validated_file": {
+                            "foreach": "@body('Get_pending_files_from_queue')?['QueueMessagesList']",
+                            "actions": {
+                                "Parse_message": {
+                                    "runAfter": {},
+                                    "type": "ParseJson",
+                                    "inputs": {
+                                        "content": "@base64ToString(items('For_each_validated_file')?['MessageText'])",
+                                        "schema": {
+                                            "properties": {
+                                                "blobName": {
+                                                    "type": "string"
+                                                },
+                                                "errorMessage": {
+                                                    "type": "null"
+                                                },
+                                                "isValid": {
+                                                    "type": "boolean"
+                                                },
+                                                "timestamp": {
+                                                    "type": "string"
+                                                },
+                                                "validationTimestamp": {
+                                                    "type": "string"
+                                                },
+                                                "vesselId": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    }
+                                },
+                                "Condition_-_Is_Valid": {
+                                    "actions": {
+                                        "AWS_S3_Transfer": {
+                                            "runAfter": {},
+                                            "type": "Workflow",
+                                            "inputs": {
+                                                "body": {
+                                                    "blobName": "@body('Parse_message')?['blobName']",
+                                                    "vesselId": "@body('Parse_message')?['vesselId']"
+                                                },
+                                                "host": {
+                                                    "workflowReferenceName": "s3-transfer-workflow"
+                                                }
+                                            }
+                                        },
+                                        "Delete_message_from_queue": {
+                                            "runAfter": {
+                                                "AWS_S3_Transfer": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['azurequeues']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "delete",
+                                                "path": "/v2/storageAccounts/@{encodeURIComponent(encodeURIComponent(variables('storageAccountName')))}/queues/@{encodeURIComponent('validated-data-queue')}/messages/@{encodeURIComponent(items('For_each_validated_file')?['MessageId'])}",
+                                                "queries": {
+                                                    "popreceipt": "@items('For_each_validated_file')?['PopReceipt']"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "Parse_message": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "expression": {
+                                        "and": [
+                                            {
+                                                "equals": [
+                                                    "@body('Parse_message')?['isValid']",
+                                                    true
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    "type": "If"
+                                }
+                            },
+                            "runAfter": {
+                                "Get_pending_files_from_queue": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "azurequeues": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', 'azurequeues')]",
+                                "connectionName": "azurequeues",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/azurequeues')]"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}

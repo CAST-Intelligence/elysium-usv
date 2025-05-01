@@ -65,7 +65,7 @@
    - Create validation suite for end-to-end verification
 
 ## Timeline & Resources
-- Phase 1: 2 weeks (1 Azure developer, 1 data engineer)
+- Phase 1: 2 weeks (1 Azure developer, 1 data enginaz feer)
 - Phase 2: 3 weeks (2 developers)
 - Phase 3: 2 weeks (1 developer, 1 QA engineer)
 - Phase 4: Planning now, execution when ground station available
