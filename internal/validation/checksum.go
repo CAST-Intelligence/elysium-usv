@@ -19,7 +19,7 @@ func VerifyChecksum(ctx context.Context, client *azblob.Client, containerName, b
 	// Get a container client and then a blob client
 	containerClient := client.ServiceClient().NewContainerClient(containerName)
 	blobClient := containerClient.NewBlobClient(blobName)
-	
+
 	// Download the blob
 	response, err := blobClient.DownloadStream(ctx, nil)
 	if err != nil {
@@ -73,7 +73,7 @@ func ValidateBlob(ctx context.Context, client *azblob.Client, containerName, blo
 	// Extract metadata - need to handle nil strings
 	metadata := make(map[string]string)
 	log.Printf("Blob %s has %d metadata entries", blobName, len(props.Metadata))
-	
+
 	for k, v := range props.Metadata {
 		if v != nil {
 			metadata[k] = *v
@@ -109,7 +109,7 @@ func ValidateBlob(ctx context.Context, client *azblob.Client, containerName, blo
 	for k, v := range props.Metadata {
 		updatedMetadata[k] = v
 	}
-	
+
 	// Add validation status fields
 	validStatus := getValidationStatus(isValid)
 	timestamp := getCurrentTimestamp()
@@ -121,7 +121,7 @@ func ValidateBlob(ctx context.Context, client *azblob.Client, containerName, blo
 	// Set the updated metadata
 	_, err = blobClient.SetMetadata(ctx, updatedMetadata, nil)
 	if err != nil {
-		return fmt.Errorf("failed to update blob metadata: %w", err)
+		return false, fmt.Errorf("failed to update blob metadata: %w", err)
 	}
 
 	return isValid, nil

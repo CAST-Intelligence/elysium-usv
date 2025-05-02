@@ -4,13 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
-	"github.com/CAST-Intelligence/elysium-usv/internal/audit"
-	"github.com/CAST-Intelligence/elysium-usv/internal/config"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue"
+	"github.com/CAST-Intelligence/elysium-usv/internal/audit"
+	"github.com/CAST-Intelligence/elysium-usv/internal/config"
 )
 
 // CleanupWorker processes blobs for cleanup after transfer
@@ -76,10 +75,10 @@ func (cw *CleanupWorker) processCleanupQueue(ctx context.Context, batchSize int)
 
 	// Create options for dequeuing messages
 	options := &azqueue.DequeueMessagesOptions{
-		NumberOfMessages: &[]int32{int32(batchSize)}[0], // Convert batch size to int32 pointer
-		VisibilityTimeout: &[]int32{30}[0], // 30 seconds visibility timeout
+		NumberOfMessages:  &[]int32{int32(batchSize)}[0], // Convert batch size to int32 pointer
+		VisibilityTimeout: &[]int32{30}[0],               // 30 seconds visibility timeout
 	}
-	
+
 	// Dequeue messages from the queue
 	resp, err := queueClient.DequeueMessages(ctx, options)
 	if err != nil {
@@ -91,7 +90,7 @@ func (cw *CleanupWorker) processCleanupQueue(ctx context.Context, batchSize int)
 		log.Println("No cleanup messages found in queue, checking for expired blobs")
 		return cw.processExpiredBlobs(ctx, batchSize)
 	}
-	
+
 	log.Printf("Received %d messages from cleanup queue", len(resp.Messages))
 
 	// Process each message
@@ -102,7 +101,7 @@ func (cw *CleanupWorker) processCleanupQueue(ctx context.Context, batchSize int)
 			log.Printf("Received message with nil MessageText, skipping")
 			continue
 		}
-		
+
 		blobName := *msg.MessageText
 		log.Printf("Processing cleanup message for blob: %s", blobName)
 
@@ -119,7 +118,7 @@ func (cw *CleanupWorker) processCleanupQueue(ctx context.Context, batchSize int)
 			log.Printf("Received message with nil MessageID or PopReceipt, skipping")
 			continue
 		}
-		
+
 		_, err = queueClient.DeleteMessage(ctx, *msg.MessageID, *msg.PopReceipt, nil)
 		if err != nil {
 			log.Printf("Failed to delete message for blob %s: %v", blobName, err)
@@ -139,14 +138,14 @@ func (cw *CleanupWorker) processExpiredBlobs(ctx context.Context, batchSize int)
 
 	// List blobs
 	pager := containerClient.NewListBlobsFlatPager(nil)
-	
+
 	processed := 0
 	for pager.More() && processed < batchSize {
 		resp, err := pager.NextPage(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to list blobs: %w", err)
 		}
-		
+
 		for _, blob := range resp.Segment.BlobItems {
 			// Check if the blob has been transferred (via metadata)
 			blobClient := containerClient.NewBlobClient(*blob.Name)
@@ -161,7 +160,7 @@ func (cw *CleanupWorker) processExpiredBlobs(ctx context.Context, batchSize int)
 			if v := props.Metadata["transferstatus"]; v != nil {
 				transferStatus = *v
 			}
-			
+
 			if transferStatus != "transferred" {
 				continue
 			}
@@ -170,17 +169,17 @@ func (cw *CleanupWorker) processExpiredBlobs(ctx context.Context, batchSize int)
 			if blob.Properties.LastModified != nil {
 				lastModTime := *blob.Properties.LastModified
 				retentionPeriod := time.Duration(cw.retentionDays) * 24 * time.Hour
-				
+
 				if time.Since(lastModTime) > retentionPeriod {
 					// Blob is past retention, clean it up
 					if err := cw.cleanupBlob(ctx, *blob.Name); err != nil {
 						log.Printf("Failed to cleanup expired blob %s: %v", *blob.Name, err)
 						continue
 					}
-					
+
 					log.Printf("Expired blob %s cleaned up successfully", *blob.Name)
 					processed++
-					
+
 					if processed >= batchSize {
 						break
 					}
@@ -197,53 +196,53 @@ func (cw *CleanupWorker) cleanupBlob(ctx context.Context, blobName string) error
 	// Create blob client
 	containerClient := cw.blobClient.ServiceClient().NewContainerClient(cw.containerName)
 	blobClient := containerClient.NewBlobClient(blobName)
-	
+
 	// Get properties to verify it has been transferred
 	props, err := blobClient.GetProperties(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get blob properties: %w", err)
 	}
-	
+
 	// Ensure the blob has been transferred before deletion
 	var transferStatus, s3Destination string
 	if v := props.Metadata["transferstatus"]; v != nil {
 		transferStatus = *v
 	}
-	
+
 	if transferStatus != "transferred" {
 		return fmt.Errorf("blob %s has not been transferred yet", blobName)
 	}
-	
+
 	// Get the S3 destination for the audit log
 	if v := props.Metadata["s3destination"]; v != nil {
 		s3Destination = *v
 	} else {
 		s3Destination = "unknown"
 	}
-	
+
 	// Generate an audit certificate before deletion
 	if err := audit.GenerateAuditCertificate(ctx, blobName, s3Destination); err != nil {
 		return fmt.Errorf("failed to generate audit certificate: %w", err)
 	}
-	
+
 	// Delete the blob
 	_, err = blobClient.Delete(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to delete blob: %w", err)
 	}
-	
+
 	return nil
 }
 
 // QueueCleanupTaskInternal adds a blob to the cleanup queue - for internal use by the transfer worker
 func QueueCleanupTaskInternal(ctx context.Context, queueClient *azqueue.ServiceClient, queueName, blobName string) error {
 	client := queueClient.NewQueueClient(queueName)
-	
+
 	// Add the message to the queue
 	_, err := client.EnqueueMessage(ctx, blobName, nil)
 	if err != nil {
 		return fmt.Errorf("failed to queue cleanup task: %w", err)
 	}
-	
+
 	return nil
 }
