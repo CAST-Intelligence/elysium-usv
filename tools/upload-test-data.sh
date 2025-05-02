@@ -93,33 +93,22 @@ upload_file() {
   <checksumAlgorithm>SHA256</checksumAlgorithm>
 </Metadata>"
   
-  # First upload the blob
+  # Upload the blob with metadata
   az storage blob upload \
     --container-name usvdata \
     --file "$file_path" \
     --name "$blob_name" \
+    --overwrite \
+    --metadata checksum="$checksum" vesselid="$vessel_id" timestamp="$timestamp" checksumAlgorithm="SHA256" \
     --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
     
-  # Then set metadata explicitly
-  curl -X PUT \
-    "http://127.0.0.1:10000/devstoreaccount1/usvdata/$blob_name?comp=metadata" \
-    -H "x-ms-version: 2019-12-12" \
-    -H "x-ms-date: $(date -u +"%a, %d %b %Y %H:%M:%S GMT")" \
-    -H "x-ms-meta-checksum: $checksum" \
-    -H "x-ms-meta-vesselid: $vessel_id" \
-    -H "x-ms-meta-timestamp: $timestamp" \
-    -H "x-ms-meta-checksumAlgorithm: SHA256" \
-    -H "Authorization: SharedKey devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
-    -H "Content-Length: 0"
-    
-  # Verify metadata was set correctly
-  echo "Verifying metadata for $blob_name..."
-  curl -X HEAD \
-    "http://127.0.0.1:10000/devstoreaccount1/usvdata/$blob_name" \
-    -H "x-ms-version: 2019-12-12" \
-    -H "x-ms-date: $(date -u +"%a, %d %b %Y %H:%M:%S GMT")" \
-    -H "Authorization: SharedKey devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
-    -v
+  # Display blob properties to verify metadata
+  echo "Checking properties for $blob_name..."
+  az storage blob show \
+    --container-name usvdata \
+    --name "$blob_name" \
+    --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;" \
+    --query "metadata" -o json
   
   # Add message to validation queue
   echo "Adding message to validation queue for $blob_name..."
