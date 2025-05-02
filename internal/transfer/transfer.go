@@ -3,6 +3,7 @@ package transfer
 import (
 	"context"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -67,8 +68,9 @@ func TransferValidatedBlob(
 	fileName := filepath.Base(blobName)
 	s3Key := aws.BuildObjectKey(vesselID, fileName)
 
-	// Upload to S3
-	if err := s3Client.UploadObject(ctx, s3Key, response.Body); err != nil {
+	// Upload to S3 and get the ETag (MD5 hash)
+	etag, err := s3Client.UploadObject(ctx, s3Key, response.Body)
+	if err != nil {
 		return fmt.Errorf("failed to upload to S3: %w", err)
 	}
 
@@ -76,6 +78,11 @@ func TransferValidatedBlob(
 	exists, err := s3Client.VerifyObject(ctx, s3Key)
 	if err != nil || !exists {
 		return fmt.Errorf("failed to verify S3 upload: %w", err)
+	}
+	
+	// Check if we got a valid ETag
+	if etag == "" {
+		log.Printf("Warning: No ETag received for %s", s3Key)
 	}
 
 	// Get properties again to get current metadata
@@ -97,6 +104,11 @@ func TransferValidatedBlob(
 	updatedMetadata["transferstatus"] = &transferredStatus
 	updatedMetadata["transfertimestamp"] = &timestamp
 	updatedMetadata["s3destination"] = &s3Dest
+	
+	// If we have a valid ETag (MD5), store it in the metadata
+	if etag != "" {
+		updatedMetadata["s3etag"] = &etag
+	}
 
 	// Set the metadata
 	_, err = blobItemClient.SetMetadata(ctx, updatedMetadata, nil)

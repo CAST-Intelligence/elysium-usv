@@ -3,6 +3,8 @@ package aws
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -72,13 +74,13 @@ func (c *S3Client) BucketName() string {
 	return c.bucketName
 }
 
-// UploadObject uploads an object to S3
-func (c *S3Client) UploadObject(ctx context.Context, key string, reader io.Reader) error {
+// UploadObject uploads an object to S3 and returns the ETag (MD5 hash)
+func (c *S3Client) UploadObject(ctx context.Context, key string, reader io.Reader) (string, error) {
 	// Convert reader to byte array
 	buf := new(bytes.Buffer)
 	_, err := buf.ReadFrom(reader)
 	if err != nil {
-		return fmt.Errorf("failed to read data: %w", err)
+		return "", fmt.Errorf("failed to read data: %w", err)
 	}
 
 	// Get the data size
@@ -86,28 +88,50 @@ func (c *S3Client) UploadObject(ctx context.Context, key string, reader io.Reade
 	dataSize := len(data)
 	log.Printf("Preparing to upload %d bytes to S3: %s/%s", dataSize, c.bucketName, key)
 
+	// Calculate MD5 hash locally before upload
+	md5Hash := md5.Sum(data)
+	calculatedMD5 := hex.EncodeToString(md5Hash[:])
+	log.Printf("Calculated MD5 hash for %s: %s", key, calculatedMD5)
+
 	// Upload the object
-	_, err = c.client.PutObject(ctx, &s3.PutObjectInput{
+	response, err := c.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(c.bucketName),
 		Key:    aws.String(key),
 		Body:   bytes.NewReader(data),
 	})
 	if err != nil {
-		return fmt.Errorf("failed to upload object: %w", err)
+		return "", fmt.Errorf("failed to upload object: %w", err)
+	}
+
+	// Extract ETag (MD5 hash) from response
+	var eTag string
+	if response.ETag != nil {
+		// ETag is usually returned with quotes, so strip them
+		eTag = strings.Trim(*response.ETag, "\"")
+		log.Printf("Received ETag from S3 for %s: %s", key, eTag)
+
+		// Compare with calculated MD5
+		if strings.EqualFold(eTag, calculatedMD5) {
+			log.Printf("MD5 verification succeeded for %s: calculated=%s, S3=%s", key, calculatedMD5, eTag)
+		} else {
+			log.Printf("WARNING: MD5 mismatch for %s: calculated=%s, S3=%s", key, calculatedMD5, eTag)
+		}
+	} else {
+		log.Printf("WARNING: No ETag received from S3 for %s", key)
 	}
 
 	// Verify the object was uploaded correctly
 	log.Printf("Upload complete, verifying object in S3: %s/%s", c.bucketName, key)
 	exists, err := c.VerifyObject(ctx, key)
 	if err != nil {
-		return fmt.Errorf("upload succeeded but verification failed: %w", err)
+		return eTag, fmt.Errorf("upload succeeded but verification failed: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("upload appeared to succeed but object not found in S3")
+		return eTag, fmt.Errorf("upload appeared to succeed but object not found in S3")
 	}
 
 	log.Printf("Successfully uploaded and verified object in S3: %s/%s (%d bytes)", c.bucketName, key, dataSize)
-	return nil
+	return eTag, nil
 }
 
 // VerifyObject verifies that an object exists in S3
