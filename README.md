@@ -136,19 +136,19 @@ This repository contains the code and configuration for implementing the complet
 - Monitoring and auditing tools
 - Documentation and operational guides
 
-## Hybrid Implementation Architecture
+## Go Implementation Architecture
 
-This solution uses a hybrid approach combining Azure Functions and Logic Apps:
+After assessing the requirements and initial prototyping, we have pivoted to using a robust Go-based monolithic service to implement the data pipeline. This decision was made based on considerations of simplicity, maintainability, and deployment stability.
 
-### Azure Functions Components
-- **Data Validation Function**: Blob-triggered function that validates data integrity with checksum verification
-- **AWS Authentication Function**: Generates secure, vessel-specific credentials for S3 access
-- **Generate Audit Certificate Function**: Creates compliance records for data destruction certification
-
-### Logic App Workflows
-- **Master Orchestration Workflow**: Coordinates the end-to-end pipeline execution
-- **S3 Transfer Workflow**: Manages secure transfer of validated data to AWS S3
-- **Cleanup Workflow**: Handles data retention policies and certified data destruction
+### Key Components:
+- **Worker Pattern Implementation**: Background processing using dedicated workers for each stage
+- **Validation Worker**: Processes blobs for checksum validation and metadata updates
+- **Transfer Worker**: Handles secure transfer of validated data to AWS S3 with verification
+- **Cleanup Worker**: Manages data retention and certified data destruction
+- **HTTP Server**: Provides health endpoints and operation status
+- **Azure Clients**: Integration with Azure Blob Storage and Queue Storage
+- **AWS S3 Client**: Secure integration with AWS S3 with MinIO compatibility for testing
+- **File-based Audit System**: Records operations for compliance and security
 
 ## Development & Deployment
 
@@ -158,55 +158,86 @@ This solution uses a hybrid approach combining Azure Functions and Logic Apps:
 - Access to AWS account for S3 bucket (for production)
 
 ### Local Development Setup
-1. Install Python 3.9+ and required packages:
+1. Install Go 1.21+ and required dependencies:
    ```
-   pip install -r src/functions/requirements.txt
-   pip install -r tools/requirements.txt
+   go mod download
    ```
 
-2. Set up Azure Function Core Tools for local testing.
-
-3. For local testing, set the connection string:
+2. Set up a local development environment using Docker:
    ```
-   export AZURE_STORAGE_CONNECTION_STRING="your_storage_connection_string"
+   cd tools
+   ./local-dev.sh setup
+   ```
+   
+   This script sets up:
+   - Azurite for Azure Storage emulation
+   - MinIO for S3 emulation
+   - Creates necessary containers, queues, and buckets
+
+3. For local testing, the environment variables are automatically set by the local-dev.sh script:
+   ```
+   ./local-dev.sh run
    ```
 
 ### Testing with Mock Data
-Use the mock data generator to simulate USV data:
+Use the upload test data script to simulate USV data in the pipeline:
 
 ```bash
-python tools/mock-data-generator.py --count 10 --interval 5
+cd tools
+./upload-test-data.sh
 ```
 
-Options:
-- `--count`: Number of files to generate
-- `--min-size`/`--max-size`: File size range in KB
-- `--corrupt`: Percentage of files to corrupt (for testing validation)
-- `--interval`: Seconds between uploads (simulates real data flow)
-- `--vessel-id`: Vessel identifier
+This script:
+- Generates test data files for multiple vessels
+- Calculates SHA256 checksums for validation
+- Uploads files to Azure Blob Storage with proper metadata
+- Adds messages to the validation queue for processing
+- Includes a test file with an invalid checksum for validation testing
 
 ### Deployment
-Deploy using the included deployment script:
+Deploy to Azure App Service using the following steps:
 
 ```bash
-cd deployment
-chmod +x deploy.sh
-./deploy.sh -g your-resource-group -e dev
+# Build for Linux
+GOOS=linux GOARCH=amd64 go build -o bin/pipeline cmd/usvpipeline/main.go
+
+# Create an Azure App Service Plan (if not already created)
+az appservice plan create --name elysium-usv-plan --resource-group your-resource-group --sku B1 --is-linux
+
+# Create an Azure Web App
+az webapp create --name elysium-usv-pipeline --resource-group your-resource-group --plan elysium-usv-plan --runtime "GO|1.21"
+
+# Deploy the application
+zip -r app.zip bin/ configs/
+az webapp deployment source config-zip --resource-group your-resource-group --name elysium-usv-pipeline --src app.zip
+
+# Configure environment variables
+az webapp config appsettings set --resource-group your-resource-group --name elysium-usv-pipeline --settings \
+  AZURE_STORAGE_CONNECTION_STRING="your_azure_storage_connection" \
+  AWS_ACCESS_KEY_ID="your_aws_access_key" \
+  AWS_SECRET_ACCESS_KEY="your_aws_secret_key" \
+  AWS_REGION="ap-southeast-2" \
+  AWS_BUCKET_NAME="revelare-vessel-data" \
+  ENVIRONMENT="production"
 ```
 
-Options:
-- `-g`: Resource group name (required)
-- `-e`: Environment (dev, test, prod)
-- `-l`: Azure region location (default: australiaeast)
-
-The script:
-1. Creates/updates resources using ARM templates
-2. Deploys all Azure Functions
-3. Deploys Logic App workflows
-4. Sets up necessary connections
+Note: For production deployments, consider using Azure Key Vault for secret management instead of environment variables.
 
 ## Monitoring & Maintenance
 
-- Use Azure Application Insights for monitoring function performance
-- View Logic App run history for workflow execution details
-- Audit logs are stored in Azure Table Storage for compliance records
+- Access health endpoints on `/health` for service availability
+- View detailed status on `/api/v1/status` for worker state and processing metrics
+- Get worker information via `/api/v1/workers` endpoint
+- Check metrics via `/metrics` endpoint
+- Audit logs are stored as JSON files for compliance records
+- Configure logging verbosity with the `LOG_LEVEL` environment variable
+
+## HTTP API Endpoints
+
+The service exposes the following endpoints:
+
+- `GET /health` - Health check endpoint (returns 200 if healthy, 503 if unhealthy)
+- `GET /version` - Returns the current version of the service
+- `GET /metrics` - Returns operational metrics
+- `GET /api/v1/status` - Returns detailed pipeline status
+- `GET /api/v1/workers` - Returns detailed worker status
