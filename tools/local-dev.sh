@@ -10,6 +10,24 @@ echo "======================================"
 echo "Elysium USV Pipeline - Local Dev Setup"
 echo "======================================"
 
+# Clean up any existing processes
+cleanup_existing_processes() {
+  echo "Cleaning up any existing processes..."
+  # Find and kill any running usvpipeline processes
+  pkill -f "usvpipeline" || true
+  # Check if port 8081 is in use and kill the process
+  PROCESS_PID=$(lsof -ti:8081 2>/dev/null)
+  if [ -n "$PROCESS_PID" ]; then
+    echo "Killing process using port 8081 (PID: $PROCESS_PID)"
+    kill -9 $PROCESS_PID 2>/dev/null || true
+  fi
+  # Wait for processes to exit
+  sleep 1
+}
+
+# Run cleanup
+cleanup_existing_processes
+
 # Check if Docker is running
 if ! docker info > /dev/null 2>&1; then
   echo "Error: Docker is not running or not accessible"
@@ -95,6 +113,52 @@ if [ "$1" == "setup" ] || [ "$1" == "run" ]; then
   echo "Azure and AWS resources created or already exist"
 fi
 
+# Reset all state function
+reset_all_state() {
+  echo "Resetting all state..."
+  
+  # Stop existing containers
+  docker-compose down
+  
+  # Remove volume data
+  docker volume rm tools_azurite-data tools_minio-data || true
+  
+  # Remove audit logs
+  rm -rf /tmp/usvpipeline/audit
+  
+  # Start containers again
+  docker-compose up -d
+  
+  # Wait for services to be ready
+  echo "Waiting for services to restart..."
+  sleep 5
+  
+  # Create resources again
+  echo "Creating Azure resources from scratch..."
+  AZURE_CONN_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
+  
+  # Create blob container
+  az storage container create \
+    --name usvdata \
+    --connection-string "${AZURE_CONN_STRING}BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;" || true
+  
+  # Create queues
+  for queue in "validation-queue" "transfer-queue" "cleanup-queue"; do
+    az storage queue create \
+      --name $queue \
+      --connection-string "${AZURE_CONN_STRING}QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;" || true
+  done
+  
+  # Create S3 bucket
+  AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin aws --endpoint-url http://localhost:9000 \
+    s3 mb s3://revelare-vessel-data --region ap-southeast-2 || true
+  
+  # Create audit directory
+  mkdir -p /tmp/usvpipeline/audit
+  
+  echo "All state has been reset!"
+}
+
 # Build and run if requested
 if [ "$1" == "run" ]; then
   echo "Building and running the application..."
@@ -108,6 +172,8 @@ elif [ "$1" == "build" ]; then
   echo "Build complete: $REPO_ROOT/bin/usvpipeline"
 elif [ "$1" == "setup" ]; then
   echo "Setup complete! Resources have been created."
+elif [ "$1" == "reset" ]; then
+  reset_all_state
 else
   echo "Local environment is ready!"
   echo ""
@@ -116,4 +182,5 @@ else
   echo "  $0 setup   - Set up environment and create necessary Azure resources"
   echo "  $0 build   - Set up environment and build the app"
   echo "  $0 run     - Set up environment, create resources, build and run the app"
+  echo "  $0 reset   - Reset all state (remove containers, volumes, and recreate resources)"
 fi

@@ -71,6 +71,14 @@ for queue in "validation-queue" "transfer-queue" "cleanup-queue"; do
     --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;"
 done
 
+# Clear any existing messages in the validation queue to start fresh
+echo "Clearing existing messages from validation queue..."
+AZURE_CONN_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;"
+
+# Delete and recreate the validation queue
+az storage queue delete --name validation-queue --connection-string "$AZURE_CONN_STRING" || true
+az storage queue create --name validation-queue --connection-string "$AZURE_CONN_STRING"
+
 # Function to upload a file with metadata and queue a validation message
 upload_file() {
   local file_path=$1
