@@ -121,7 +121,7 @@ func ValidateBlob(ctx context.Context, client *azblob.Client, containerName, blo
 	// Set the updated metadata
 	_, err = blobClient.SetMetadata(ctx, updatedMetadata, nil)
 	if err != nil {
-		return false, fmt.Errorf("failed to update blob metadata: %w", err)
+		return fmt.Errorf("failed to update blob metadata: %w", err)
 	}
 
 	return isValid, nil

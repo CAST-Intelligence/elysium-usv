@@ -33,7 +33,7 @@ export AWS_SECRET_ACCESS_KEY="minioadmin"
 export AWS_REGION="ap-southeast-2" # Australian region for data sovereignty
 export AWS_BUCKET_NAME="revelare-vessel-data"
 export LOG_LEVEL="debug"
-export PORT="8080"
+export PORT="8081"
 export WORKER_COUNT="3"
 export PROCESSING_BATCH_SIZE="10"
 export RETENTION_DAYS="7"
@@ -59,33 +59,29 @@ echo ""
 if [ "$1" == "setup" ] || [ "$1" == "run" ]; then
   echo "Creating necessary Azure resources..."
   
+  # Sleep a bit more to ensure Azurite is fully ready
+  sleep 3
+  
+  # Use the Azure CLI (az) for better compatibility
   echo "Creating blob container..."
-  curl -X PUT \
-    "http://localhost:10000/devstoreaccount1/usvdata?restype=container" \
-    -H "x-ms-version: 2019-12-12" \
-    -H "x-ms-date: $(date -u +"%a, %d %b %Y %H:%M:%S GMT")" \
-    -H "Content-Length: 0" \
-    -H "Authorization: SharedKey devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
-    -s -o /dev/null || echo "Container already exists or creation failed"
+  az storage container create \
+    --name usvdata \
+    --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
+    -o none || echo "Container already exists or creation failed"
 
   echo "Creating queues..."
   for queue in "validation-queue" "transfer-queue" "cleanup-queue"; do
-    curl -X PUT \
-      "http://localhost:10001/devstoreaccount1/$queue" \
-      -H "x-ms-version: 2019-12-12" \
-      -H "x-ms-date: $(date -u +"%a, %d %b %Y %H:%M:%S GMT")" \
-      -H "Content-Length: 0" \
-      -H "Authorization: SharedKey devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
-      -v || echo "Queue $queue already exists or creation failed"
+    az storage queue create \
+      --name $queue \
+      --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
+      -o none || echo "Queue $queue already exists or creation failed"
     
     # Verify the queue was created successfully
-    echo "Verifying queue $queue..."
-    curl -X GET \
-      "http://localhost:10001/devstoreaccount1/$queue/messages?numofmessages=1" \
-      -H "x-ms-version: 2019-12-12" \
-      -H "x-ms-date: $(date -u +"%a, %d %b %Y %H:%M:%S GMT")" \
-      -H "Authorization: SharedKey devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
-      -v || echo "Failed to verify queue $queue"
+    echo "Verifying queue $queue exists..."
+    az storage queue exists \
+      --name $queue \
+      --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
+      -o none || echo "Failed to verify queue $queue"
   done
 
   # Create S3 bucket in MinIO
