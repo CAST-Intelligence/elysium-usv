@@ -76,7 +76,16 @@ if [ "$1" == "setup" ] || [ "$1" == "run" ]; then
       -H "x-ms-date: $(date -u +"%a, %d %b %Y %H:%M:%S GMT")" \
       -H "Content-Length: 0" \
       -H "Authorization: SharedKey devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
-      -s -o /dev/null || echo "Queue $queue already exists or creation failed"
+      -v || echo "Queue $queue already exists or creation failed"
+    
+    # Verify the queue was created successfully
+    echo "Verifying queue $queue..."
+    curl -X GET \
+      "http://localhost:10001/devstoreaccount1/$queue/messages?numofmessages=1" \
+      -H "x-ms-version: 2019-12-12" \
+      -H "x-ms-date: $(date -u +"%a, %d %b %Y %H:%M:%S GMT")" \
+      -H "Authorization: SharedKey devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
+      -v || echo "Failed to verify queue $queue"
   done
 
   # Create S3 bucket in MinIO

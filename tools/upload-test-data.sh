@@ -58,11 +58,18 @@ az storage container create \
   --name usvdata \
   --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
 
-# Create the queue if it doesn't exist
-echo "Creating validation queue in Azurite..."
-az storage queue create \
-  --name validation-queue \
-  --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;"
+# Create all required queues if they don't exist
+for queue in "validation-queue" "transfer-queue" "cleanup-queue"; do
+  echo "Creating $queue in Azurite..."
+  az storage queue create \
+    --name $queue \
+    --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;"
+  
+  echo "Checking $queue exists..."
+  az storage queue exists \
+    --name $queue \
+    --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;"
+done
 
 # Function to upload a file with metadata and queue a validation message
 upload_file() {
@@ -74,12 +81,45 @@ upload_file() {
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   
   echo "Uploading $file_path to $blob_name..."
+  # Debugging - show metadata
+  echo "Setting metadata: checksum=$checksum vesselid=$vessel_id"
+  
+  # Use direct HTTP API for better metadata control
+  metadata_str="<?xml version=\"1.0\" encoding=\"utf-8\"?>
+<Metadata>
+  <checksum>$checksum</checksum>
+  <vesselid>$vessel_id</vesselid>
+  <timestamp>$timestamp</timestamp>
+  <checksumAlgorithm>SHA256</checksumAlgorithm>
+</Metadata>"
+  
+  # First upload the blob
   az storage blob upload \
     --container-name usvdata \
     --file "$file_path" \
     --name "$blob_name" \
-    --metadata "vesselid=$vessel_id" "timestamp=$timestamp" "checksum=$checksum" "checksumAlgorithm=SHA256" \
     --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+    
+  # Then set metadata explicitly
+  curl -X PUT \
+    "http://127.0.0.1:10000/devstoreaccount1/usvdata/$blob_name?comp=metadata" \
+    -H "x-ms-version: 2019-12-12" \
+    -H "x-ms-date: $(date -u +"%a, %d %b %Y %H:%M:%S GMT")" \
+    -H "x-ms-meta-checksum: $checksum" \
+    -H "x-ms-meta-vesselid: $vessel_id" \
+    -H "x-ms-meta-timestamp: $timestamp" \
+    -H "x-ms-meta-checksumAlgorithm: SHA256" \
+    -H "Authorization: SharedKey devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
+    -H "Content-Length: 0"
+    
+  # Verify metadata was set correctly
+  echo "Verifying metadata for $blob_name..."
+  curl -X HEAD \
+    "http://127.0.0.1:10000/devstoreaccount1/usvdata/$blob_name" \
+    -H "x-ms-version: 2019-12-12" \
+    -H "x-ms-date: $(date -u +"%a, %d %b %Y %H:%M:%S GMT")" \
+    -H "Authorization: SharedKey devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==" \
+    -v
   
   # Add message to validation queue
   echo "Adding message to validation queue for $blob_name..."

@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
@@ -70,16 +72,30 @@ func ValidateBlob(ctx context.Context, client *azblob.Client, containerName, blo
 
 	// Extract metadata - need to handle nil strings
 	metadata := make(map[string]string)
+	log.Printf("Blob %s has %d metadata entries", blobName, len(props.Metadata))
+	
 	for k, v := range props.Metadata {
 		if v != nil {
 			metadata[k] = *v
+			log.Printf("Blob %s has metadata: %s=%s", blobName, k, *v)
+		} else {
+			log.Printf("Blob %s has nil metadata value for key: %s", blobName, k)
 		}
 	}
 
-	// Check for checksum in metadata
+	// Check for checksum in metadata - try both "checksum" and case variations
 	expectedChecksum, ok := metadata["checksum"]
 	if !ok {
-		return false, fmt.Errorf("checksum not found in blob metadata")
+		// Try alternate case variations
+		expectedChecksum, ok = metadata["Checksum"]
+		if !ok {
+			expectedChecksum, ok = metadata["CheckSum"]
+			if !ok {
+				// Log all metadata keys to help debug
+				log.Printf("Blob %s metadata keys: %v", blobName, keysToString(metadata))
+				return false, fmt.Errorf("checksum not found in blob metadata")
+			}
+		}
 	}
 
 	// Verify the checksum
@@ -122,4 +138,13 @@ func getValidationStatus(isValid bool) string {
 // getCurrentTimestamp returns the current time in ISO 8601 format
 func getCurrentTimestamp() string {
 	return time.Now().UTC().Format(time.RFC3339)
+}
+
+// keysToString converts map keys to a string for logging
+func keysToString(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return strings.Join(keys, ", ")
 }
