@@ -2,3 +2,4 @@ bin/usvpipeline
 *.log
 .DS_Store
 .env
+data/test
