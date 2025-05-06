@@ -45,6 +45,77 @@ services:
       exit 0;
       "
 
+  # FTP server for vessel data
+  ftp-server:
+    image: stilliard/pure-ftpd:latest
+    ports:
+      - "21:21"         # FTP control
+      - "30000-30009:30000-30009"  # Passive port range
+    environment:
+      FTP_USER_NAME: ftpuser
+      FTP_USER_PASS: ftppass
+      FTP_USER_HOME: /home/ftpuser
+      PUBLICHOST: localhost
+      # Enable file creation notification via SITE CHMOD command
+      ADDED_FLAGS: "--fsync=2 --chrooteveryone=true --passiveportrange=30000:30009 --sitechmod=true"
+    volumes:
+      - ftp-data:/home/ftpuser
+
+  # FTP watcher service to monitor and process new files
+  ftp-watcher:
+    image: golang:1.21-alpine
+    depends_on:
+      - ftp-server
+      - azurite
+    volumes:
+      - ftp-data:/ftp-data  # Mount FTP data
+      - ${REPO_ROOT:-/Users/selwyn/cast/cast-dev/elysium-usv}:/app  # Mount the application
+      - ftp-watch-data:/watch-data # For persistence
+    environment:
+      AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"
+      WATCH_DIR: "/ftp-data"
+      BLOB_CONTAINER_NAME: "usvdata"
+      VALIDATION_QUEUE_NAME: "validation-queue"
+    entrypoint: >
+      /bin/sh -c "
+        apk add --no-cache inotify-tools bash;
+        mkdir -p /watch-data;
+        touch /watch-data/processed_files.log;
+        echo 'Starting FTP watcher...';
+        while true; do
+          sleep 10;
+          find /ftp-data -type f -name '*.md5' | while read md5_file; do
+            data_file=\"\${md5_file%.md5}\";
+            if [ -f \"\$data_file\" ] && ! grep -q \"\$md5_file\" /watch-data/processed_files.log; then
+              echo \"Processing \$data_file with checksum \$md5_file\";
+              md5sum_val=\$(cat \"\$md5_file\" | awk '{print \$1}');
+              vessel_id=\$(basename \"\$data_file\" | cut -d'_' -f3 | cut -d'-' -f2);
+              filename=\$(basename \"\$data_file\");
+              echo \"Uploading to Azure with MD5: \$md5sum_val, VesselID: \$vessel_id\";
+              
+              # Upload to Azure Blob Storage with checksum metadata
+              az storage blob upload \\
+                --container-name usvdata \\
+                --file \"\$data_file\" \\
+                --name \"VESSEL\$vessel_id/\$filename\" \\
+                --connection-string \"\$AZURE_STORAGE_CONNECTION_STRING\" \\
+                --metadata checksum=\"\$md5sum_val\" vesselid=\"VESSEL\$vessel_id\" checksumAlgorithm=\"MD5\";
+                
+              # Add message to validation queue
+              az storage message put \\
+                --queue-name validation-queue \\
+                --content \"VESSEL\$vessel_id/\$filename\" \\
+                --connection-string \"\$AZURE_STORAGE_CONNECTION_STRING\";
+                
+              # Mark as processed
+              echo \"\$md5_file\" >> /watch-data/processed_files.log;
+            fi;
+          done;
+        done;
+      "
+
 volumes:
   azurite-data:
   minio-data:
+  ftp-data:
+  ftp-watch-data:

@@ -35,8 +35,9 @@ if ! docker info > /dev/null 2>&1; then
 fi
 
 # Start local development environment
-echo "Starting Azurite and MinIO containers..."
+echo "Starting containers (Azurite, MinIO, FTP)..."
 cd "$REPO_ROOT/tools"
+export REPO_ROOT
 docker-compose up -d
 
 # Wait for services to be ready
@@ -63,10 +64,15 @@ export CLEANUP_QUEUE_NAME="cleanup-queue"
 export BLOB_CONTAINER_NAME="usvdata"
 export OPERATION_RETRY_COUNT="3"
 export OPERATION_RETRY_INTERVAL="5s"
+export FTP_HOST="localhost"
+export FTP_PORT="21"
+export FTP_USER="ftpuser"
+export FTP_PASSWORD="ftppass"
 
 echo "Environment variables set for local development"
 echo "- Azure Storage: Azurite on ports 10000-10002"
 echo "- AWS S3: MinIO on port 9000 (API) and 9001 (console)"
+echo "- FTP Server: localhost:21 (user: ftpuser, password: ftppass)"
 echo ""
 echo "You can access MinIO console at: http://localhost:9001"
 echo "Access Key: minioadmin"
@@ -121,7 +127,7 @@ reset_all_state() {
   docker-compose down
   
   # Remove volume data
-  docker volume rm tools_azurite-data tools_minio-data || true
+  docker volume rm tools_azurite-data tools_minio-data tools_ftp-data tools_ftp-watch-data || true
   
   # Remove audit logs
   rm -rf /tmp/usvpipeline/audit
@@ -159,6 +165,17 @@ reset_all_state() {
   echo "All state has been reset!"
 }
 
+# Prepare FTP test data function
+prepare_ftp_test_data() {
+  echo "Preparing test data for FTP server..."
+  if [ -f "$REPO_ROOT/tools/prepare-ftp-test-data.sh" ]; then
+    bash "$REPO_ROOT/tools/prepare-ftp-test-data.sh"
+  else
+    echo "Error: FTP test data preparation script not found"
+    exit 1
+  fi
+}
+
 # Build and run if requested
 if [ "$1" == "run" ]; then
   echo "Building and running the application..."
@@ -174,13 +191,16 @@ elif [ "$1" == "setup" ]; then
   echo "Setup complete! Resources have been created."
 elif [ "$1" == "reset" ]; then
   reset_all_state
+elif [ "$1" == "ftp-data" ]; then
+  prepare_ftp_test_data
 else
   echo "Local environment is ready!"
   echo ""
   echo "Usage:"
-  echo "  $0         - Just set up the environment"
-  echo "  $0 setup   - Set up environment and create necessary Azure resources"
-  echo "  $0 build   - Set up environment and build the app"
-  echo "  $0 run     - Set up environment, create resources, build and run the app"
-  echo "  $0 reset   - Reset all state (remove containers, volumes, and recreate resources)"
+  echo "  $0             - Just set up the environment"
+  echo "  $0 setup       - Set up environment and create necessary Azure resources"
+  echo "  $0 build       - Set up environment and build the app"
+  echo "  $0 run         - Set up environment, create resources, build and run the app"
+  echo "  $0 reset       - Reset all state (remove containers, volumes, and recreate resources)"
+  echo "  $0 ftp-data    - Prepare and upload test data to the FTP server"
 fi

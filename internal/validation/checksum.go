@@ -3,6 +3,7 @@ package validation
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 )
 
 // VerifyChecksum validates the checksum of a blob against the expected value
-func VerifyChecksum(ctx context.Context, client *azblob.Client, containerName, blobName string, expectedChecksum string) (bool, error) {
+func VerifyChecksum(ctx context.Context, client *azblob.Client, containerName, blobName string, expectedChecksum string, algorithm string) (bool, error) {
 	// Get a container client and then a blob client
 	containerClient := client.ServiceClient().NewContainerClient(containerName)
 	blobClient := containerClient.NewBlobClient(blobName)
@@ -37,20 +38,42 @@ func VerifyChecksum(ctx context.Context, client *azblob.Client, containerName, b
 		return false, fmt.Errorf("failed to read blob data: %w", err)
 	}
 
-	// Calculate the checksum
-	calculatedChecksum, err := calculateSHA256(buffer.Bytes())
+	// Calculate the checksum based on algorithm
+	var calculatedChecksum string
+	switch strings.ToUpper(algorithm) {
+	case "MD5":
+		calculatedChecksum, err = calculateMD5(buffer.Bytes())
+	case "SHA256", "":
+		// Default to SHA256 if not specified
+		calculatedChecksum, err = calculateSHA256(buffer.Bytes())
+	default:
+		return false, fmt.Errorf("unsupported checksum algorithm: %s", algorithm)
+	}
+
 	if err != nil {
 		return false, fmt.Errorf("failed to calculate checksum: %w", err)
 	}
 
+	log.Printf("Checksum comparison: calculated=%s, expected=%s, algorithm=%s", calculatedChecksum, expectedChecksum, algorithm)
+
 	// Compare the checksums
-	isValid := calculatedChecksum == expectedChecksum
+	isValid := strings.EqualFold(calculatedChecksum, expectedChecksum)
 	return isValid, nil
 }
 
 // calculateSHA256 calculates the SHA256 hash of the data
 func calculateSHA256(data []byte) (string, error) {
 	hasher := sha256.New()
+	_, err := hasher.Write(data)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// calculateMD5 calculates the MD5 hash of the data
+func calculateMD5(data []byte) (string, error) {
+	hasher := md5.New()
 	_, err := hasher.Write(data)
 	if err != nil {
 		return "", err
@@ -98,8 +121,18 @@ func ValidateBlob(ctx context.Context, client *azblob.Client, containerName, blo
 		}
 	}
 
-	// Verify the checksum
-	isValid, err := VerifyChecksum(ctx, client, containerName, blobName, expectedChecksum)
+	// Determine which checksum algorithm to use
+	algorithm := "SHA256" // Default
+	if alg, ok := metadata["checksumAlgorithm"]; ok {
+		algorithm = alg
+	} else if alg, ok := metadata["ChecksumAlgorithm"]; ok {
+		algorithm = alg
+	}
+
+	log.Printf("Using %s algorithm for checksum validation of blob %s", algorithm, blobName)
+
+	// Verify the checksum with the appropriate algorithm
+	isValid, err := VerifyChecksum(ctx, client, containerName, blobName, expectedChecksum, algorithm)
 	if err != nil {
 		return false, err
 	}
