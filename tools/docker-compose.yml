@@ -91,18 +91,18 @@ services:
       mkdir -p /ftp-data/upload;
       # Copy test files
       if [ -d '/source-data' ]; then
-        cp /source-data/*.bin /ftp-data/upload/ 2>/dev/null || echo 'No .bin files found';
+        cp /source-data/*.bin /ftp-data/upload/ 2>/dev/null || echo 'No .bin files found'
         # Create MD5 files for each data file
-        cd /ftp-data/upload;
+        cd /ftp-data/upload
         for file in *.bin; do
-          if [ -f \"$file\" ]; then
-            md5sum \"$file\" | awk '{print $1}' > \"${file}.md5\";
-            echo \"Created MD5 for $file\";
+          if [ -f "$file" ]; then
+            md5sum "$file" | awk '{print $1}' > "${file}.md5"
+            echo "Created MD5 for $file"
           fi
-        done;
+        done
       else
-        echo 'Source data directory not found';
-      fi;
+        echo 'Source data directory not found'
+      fi
       echo 'Test data preparation completed';
       # Keep container running for debugging if needed
       tail -f /dev/null;

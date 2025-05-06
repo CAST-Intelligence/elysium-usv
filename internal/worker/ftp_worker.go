@@ -90,6 +90,12 @@ func (fw *FTPWorker) LastRun() time.Time {
 
 // connectFTP establishes a connection to the FTP server with retries
 func (fw *FTPWorker) connectFTP(ctx context.Context) (*ftp.ServerConn, error) {
+	// Special case for local file mode 
+	if fw.config.FTPHost == "none" {
+		log.Printf("FTP connection disabled with host=none, operating in local file mode")
+		return nil, nil
+	}
+
 	var conn *ftp.ServerConn
 	var err error
 
@@ -149,7 +155,15 @@ func (fw *FTPWorker) processFTPFiles(ctx context.Context, batchSize int) error {
 		}
 	}
 
-	// Connect to FTP server
+	// Process files from FTP server or local directory based on host configuration
+	var processedCount int
+	
+	// Local file mode (FTPHost is "none")
+	if fw.config.FTPHost == "none" {
+		return fw.processLocalFiles(ctx, batchSize)
+	}
+	
+	// Regular FTP mode
 	conn, err := fw.connectFTP(ctx)
 	if err != nil {
 		return err
@@ -165,7 +179,7 @@ func (fw *FTPWorker) processFTPFiles(ctx context.Context, batchSize int) error {
 	log.Printf("Found %d files on FTP server", len(entries))
 
 	// Process MD5 files and their corresponding data files
-	processedCount := 0
+	processedCount = 0
 	for _, entry := range entries {
 		if processedCount >= batchSize {
 			break
@@ -339,6 +353,158 @@ func (fw *FTPWorker) processFTPFiles(ctx context.Context, batchSize int) error {
 		log.Printf("Processed %d files", processedCount)
 	}
 
+	return nil
+}
+
+// processLocalFiles handles processing files from a local directory
+func (fw *FTPWorker) processLocalFiles(ctx context.Context, batchSize int) error {
+	log.Printf("Scanning local directory %s for files", fw.tempDir)
+	
+	// Create a processed subdirectory
+	processedDir := filepath.Join(fw.tempDir, "processed")
+	if _, err := os.Stat(processedDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(processedDir, 0755); err != nil {
+			return fmt.Errorf("failed to create processed directory: %w", err)
+		}
+	}
+	
+	// Read directory
+	entries, err := os.ReadDir(fw.tempDir)
+	if err != nil {
+		return fmt.Errorf("failed to read directory %s: %w", fw.tempDir, err)
+	}
+	
+	log.Printf("Found %d entries in local directory", len(entries))
+	
+	// Find all MD5 files
+	md5Files := make([]string, 0)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		
+		name := entry.Name()
+		if strings.HasSuffix(name, ".md5") {
+			md5Files = append(md5Files, name)
+		}
+	}
+	
+	log.Printf("Found %d MD5 files in local directory", len(md5Files))
+	
+	// Process each MD5 file and its corresponding data file
+	processedCount := 0
+	for _, md5FileName := range md5Files {
+		if processedCount >= batchSize {
+			break
+		}
+		
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		
+		// Find corresponding data file
+		dataFileName := strings.TrimSuffix(md5FileName, ".md5")
+		dataFilePath := filepath.Join(fw.tempDir, dataFileName)
+		
+		// Skip if data file doesn't exist
+		if _, err := os.Stat(dataFilePath); os.IsNotExist(err) {
+			log.Printf("Data file not found for MD5 file: %s", md5FileName)
+			continue
+		}
+		
+		// Read MD5 hash
+		md5FilePath := filepath.Join(fw.tempDir, md5FileName)
+		hash, err := readMD5FromFile(md5FilePath)
+		if err != nil {
+			log.Printf("Failed to read MD5 from file: %v", err)
+			continue
+		}
+		
+		// Verify MD5 hash
+		calculatedHash, err := calculateMD5(dataFilePath)
+		if err != nil {
+			log.Printf("Failed to calculate MD5 for data file: %v", err)
+			continue
+		}
+		
+		if calculatedHash != hash {
+			log.Printf("MD5 hash mismatch for %s - expected: %s, got: %s",
+				dataFileName, hash, calculatedHash)
+			continue
+		}
+		
+		// Extract vessel ID
+		vesselID := "unknown"
+		if ekiParts := strings.Split(dataFileName, "-EKI"); len(ekiParts) > 1 {
+			ekiID := strings.Split(ekiParts[1], ".")[0]
+			vesselID = fmt.Sprintf("EKI%s", ekiID)
+		} else if vesselParts := strings.Split(dataFileName, "VESSEL"); len(vesselParts) > 1 {
+			vesselIDPart := strings.Split(vesselParts[1], "_")[0]
+			vesselID = fmt.Sprintf("VESSEL%s", vesselIDPart)
+		}
+		
+		// Upload to Azure
+		blobName := fmt.Sprintf("%s/%s", vesselID, dataFileName)
+		log.Printf("Uploading %s with MD5 %s", dataFileName, hash)
+		
+		containerClient := fw.blobClient.ServiceClient().NewContainerClient(fw.containerName)
+		blockBlobClient := containerClient.NewBlockBlobClient(blobName)
+		
+		// Prepare metadata
+		metadata := map[string]*string{
+			"checksum":          stringPtr(hash),
+			"vesselid":          stringPtr(vesselID),
+			"timestamp":         stringPtr(time.Now().UTC().Format(time.RFC3339)),
+			"checksumAlgorithm": stringPtr("MD5"),
+		}
+		
+		// Read file
+		file, err := os.ReadFile(dataFilePath)
+		if err != nil {
+			log.Printf("Failed to read file %s: %v", dataFilePath, err)
+			continue
+		}
+		
+		// Upload file
+		options := &azblob.UploadBufferOptions{
+			Metadata: metadata,
+		}
+		_, err = blockBlobClient.UploadBuffer(ctx, file, options)
+		if err != nil {
+			log.Printf("Failed to upload blob %s: %v", blobName, err)
+			continue
+		}
+		
+		// Queue validation
+		queueClient := fw.queueClient.NewQueueClient(fw.validationQueue)
+		_, err = queueClient.EnqueueMessage(ctx, blobName, nil)
+		if err != nil {
+			log.Printf("Failed to queue validation for %s: %v", blobName, err)
+			continue
+		}
+		
+		log.Printf("Successfully processed %s", dataFileName)
+		processedCount++
+		
+		// Move files to processed directory
+		processedDataFile := filepath.Join(processedDir, dataFileName)
+		processedMD5File := filepath.Join(processedDir, md5FileName)
+		
+		err = os.Rename(dataFilePath, processedDataFile)
+		if err != nil {
+			log.Printf("Failed to move data file to processed directory: %v", err)
+		}
+		
+		err = os.Rename(md5FilePath, processedMD5File)
+		if err != nil {
+			log.Printf("Failed to move MD5 file to processed directory: %v", err)
+		}
+	}
+	
+	if processedCount > 0 {
+		log.Printf("Processed %d files from local directory", processedCount)
+	}
+	
 	return nil
 }
 
