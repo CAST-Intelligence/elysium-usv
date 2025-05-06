@@ -3,3 +3,5 @@ bin/usvpipeline
 .DS_Store
 .env
 data/test
+references/Manuals/
+references/Lightfish Training Slides.pdf

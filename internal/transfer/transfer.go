@@ -36,8 +36,15 @@ func TransferValidatedBlob(
 		return fmt.Errorf("failed to get blob info: %w", err)
 	}
 
-	// Check if the blob has been validated
-	if status, ok := blobInfo.Metadata["validationstatus"]; !ok || status != "valid" {
+	// Check if the blob has been validated - case insensitive check
+	validationStatus := ""
+	for k, v := range blobInfo.Metadata {
+		if strings.EqualFold(k, "validationstatus") {
+			validationStatus = v
+			break
+		}
+	}
+	if validationStatus != "valid" {
 		return fmt.Errorf("blob has not been validated or validation failed")
 	}
 
@@ -51,8 +58,14 @@ func TransferValidatedBlob(
 		return fmt.Errorf("failed to download blob: %w", err)
 	}
 
-	// Extract vessel ID from metadata or blob name
-	vesselID := blobInfo.Metadata["vesselid"]
+	// Extract vessel ID from metadata or blob name - case insensitive check
+	vesselID := ""
+	for k, v := range blobInfo.Metadata {
+		if strings.EqualFold(k, "vesselid") {
+			vesselID = v
+			break
+		}
+	}
 	if vesselID == "" {
 		// Try to extract from the blob name (first segment)
 		parts := strings.Split(blobName, "/")
@@ -145,15 +158,15 @@ func getBlobInfo(ctx context.Context, client *azblob.Client, containerName, blob
 		Metadata:      metadata,
 	}
 
-	// Extract additional metadata fields into struct fields
-	if checksum, ok := metadata["checksum"]; ok {
-		info.Checksum = checksum
-	}
-	if vesselID, ok := metadata["vesselid"]; ok {
-		info.VesselID = vesselID
-	}
-	if validationTime, ok := metadata["validationtimestamp"]; ok {
-		info.ValidationTime = validationTime
+	// Extract additional metadata fields into struct fields - case insensitive lookups
+	for k, v := range metadata {
+		if strings.EqualFold(k, "checksum") {
+			info.Checksum = v
+		} else if strings.EqualFold(k, "vesselid") {
+			info.VesselID = v
+		} else if strings.EqualFold(k, "validationtimestamp") {
+			info.ValidationTime = v
+		}
 	}
 
 	return info, nil
