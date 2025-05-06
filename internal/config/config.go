@@ -39,6 +39,17 @@ type Config struct {
 	OperationRetryCount    int
 	OperationRetryInterval time.Duration
 
+	// FTP settings
+	FTPWatchEnabled bool
+	FTPWatchDir     string
+	FTPPollInterval time.Duration
+	FTPHost         string
+	FTPPort         int
+	FTPUser         string
+	FTPPassword     string
+	FTPRetryCount   int
+	FTPRetryDelay   time.Duration
+
 	// Logging settings
 	LogLevel string
 	LogJSON  bool
@@ -59,6 +70,10 @@ const (
 	defaultBatchSize           = 10
 	defaultRetryCount          = 3
 	defaultRetryInterval       = 5 * time.Second
+	defaultFTPPollInterval     = 30 * time.Second
+	defaultFTPPort             = 21
+	defaultFTPRetryCount       = 3
+	defaultFTPRetryDelay       = 5 * time.Second
 	defaultLogLevel            = "info"
 )
 
@@ -94,6 +109,17 @@ func Load() (*Config, error) {
 		OperationRetryCount:    getEnvAsIntOrDefault("OPERATION_RETRY_COUNT", defaultRetryCount),
 		OperationRetryInterval: getEnvAsDurationOrDefault("OPERATION_RETRY_INTERVAL", defaultRetryInterval),
 
+		// FTP settings
+		FTPWatchEnabled: getEnvAsBoolOrDefault("FTP_WATCH_ENABLED", false),
+		FTPWatchDir:     getEnvOrDefault("FTP_WATCH_DIR", ""),
+		FTPPollInterval: getEnvAsDurationOrDefault("FTP_POLL_INTERVAL", defaultFTPPollInterval),
+		FTPHost:         getEnvOrDefault("FTP_HOST", "localhost"),
+		FTPPort:         getEnvAsIntOrDefault("FTP_PORT", defaultFTPPort),
+		FTPUser:         getEnvOrDefault("FTP_USER", ""),
+		FTPPassword:     getEnvOrDefault("FTP_PASSWORD", ""),
+		FTPRetryCount:   getEnvAsIntOrDefault("FTP_RETRY_COUNT", defaultFTPRetryCount),
+		FTPRetryDelay:   getEnvAsDurationOrDefault("FTP_RETRY_DELAY", defaultFTPRetryDelay),
+
 		// Logging settings
 		LogLevel: getEnvOrDefault("LOG_LEVEL", defaultLogLevel),
 		LogJSON:  getEnvAsBoolOrDefault("LOG_JSON", false),
@@ -116,6 +142,16 @@ func (c *Config) validateRequired() error {
 	// In production, we need AWS credentials
 	if isProduction() && (c.AWSAccessKey == "" || c.AWSSecretKey == "" || c.AWSRegion == "") {
 		return fmt.Errorf("AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION are required in production")
+	}
+
+	// If FTP watching is enabled, we need a directory to watch
+	if c.FTPWatchEnabled && c.FTPWatchDir == "" {
+		return fmt.Errorf("FTP_WATCH_DIR is required when FTP_WATCH_ENABLED is true")
+	}
+
+	// If FTP watching is enabled, we need FTP connection details
+	if c.FTPWatchEnabled && (c.FTPHost == "" || c.FTPUser == "" || c.FTPPassword == "") {
+		return fmt.Errorf("FTP_HOST, FTP_USER, and FTP_PASSWORD are required when FTP_WATCH_ENABLED is true")
 	}
 
 	return nil

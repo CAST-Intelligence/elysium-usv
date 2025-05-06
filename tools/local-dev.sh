@@ -10,11 +10,13 @@ echo "======================================"
 echo "Elysium USV Pipeline - Local Dev Setup"
 echo "======================================"
 
+echo "Command: $1"
+
 # Clean up any existing processes
 cleanup_existing_processes() {
   echo "Cleaning up any existing processes..."
   # Find and kill any running usvpipeline processes
-  pkill -f "usvpipeline" || true
+  pkill -f "usvpipeline" 2>/dev/null || true
   # Check if port 8081 is in use and kill the process
   PROCESS_PID=$(lsof -ti:8081 2>/dev/null)
   if [ -n "$PROCESS_PID" ]; then
@@ -64,10 +66,20 @@ export CLEANUP_QUEUE_NAME="cleanup-queue"
 export BLOB_CONTAINER_NAME="usvdata"
 export OPERATION_RETRY_COUNT="3"
 export OPERATION_RETRY_INTERVAL="5s"
+
+# FTP configuration
 export FTP_HOST="localhost"
 export FTP_PORT="21"
 export FTP_USER="ftpuser"
 export FTP_PASSWORD="ftppass"
+
+# FTP worker settings
+export FTP_WATCH_ENABLED="true"
+# Create a watch directory in tmp for testing
+FTP_WATCH_DIR="/tmp/elysium-usv-ftp-watch"
+mkdir -p "$FTP_WATCH_DIR"
+export FTP_WATCH_DIR
+export FTP_POLL_INTERVAL="10s"  # More frequent polling for testing
 
 echo "Environment variables set for local development"
 echo "- Azure Storage: Azurite on ports 10000-10002"
@@ -176,31 +188,119 @@ prepare_ftp_test_data() {
   fi
 }
 
-# Build and run if requested
-if [ "$1" == "run" ]; then
-  echo "Building and running the application..."
-  cd "$REPO_ROOT"
-  go build -o bin/usvpipeline ./cmd/usvpipeline
-  ./bin/usvpipeline
-elif [ "$1" == "build" ]; then
-  echo "Building the application..."
-  cd "$REPO_ROOT"
-  go build -o bin/usvpipeline ./cmd/usvpipeline
-  echo "Build complete: $REPO_ROOT/bin/usvpipeline"
-elif [ "$1" == "setup" ]; then
-  echo "Setup complete! Resources have been created."
-elif [ "$1" == "reset" ]; then
-  reset_all_state
-elif [ "$1" == "ftp-data" ]; then
-  prepare_ftp_test_data
-else
-  echo "Local environment is ready!"
-  echo ""
-  echo "Usage:"
-  echo "  $0             - Just set up the environment"
-  echo "  $0 setup       - Set up environment and create necessary Azure resources"
-  echo "  $0 build       - Set up environment and build the app"
-  echo "  $0 run         - Set up environment, create resources, build and run the app"
-  echo "  $0 reset       - Reset all state (remove containers, volumes, and recreate resources)"
-  echo "  $0 ftp-data    - Prepare and upload test data to the FTP server"
-fi
+# Process command
+case "$1" in
+  "run")
+    echo "Building and running the application..."
+    cd "$REPO_ROOT"
+    go build -o bin/usvpipeline ./cmd/usvpipeline
+    ./bin/usvpipeline
+    ;;
+  "build")
+    echo "Building the application..."
+    cd "$REPO_ROOT"
+    go build -o bin/usvpipeline ./cmd/usvpipeline
+    echo "Build complete: $REPO_ROOT/bin/usvpipeline"
+    ;;
+  "setup")
+    echo "Creating necessary Azure resources..."
+    # Sleep a bit more to ensure Azurite is fully ready
+    sleep 3
+    
+    # Use the Azure CLI (az) for better compatibility
+    echo "Creating blob container..."
+    az storage container create \
+      --name usvdata \
+      --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
+      -o none || echo "Container already exists or creation failed"
+
+    echo "Creating queues..."
+    for queue in "validation-queue" "transfer-queue" "cleanup-queue"; do
+      az storage queue create \
+        --name $queue \
+        --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
+        -o none || echo "Queue $queue already exists or creation failed"
+      
+      # Verify the queue was created successfully
+      echo "Verifying queue $queue exists..."
+      az storage queue exists \
+        --name $queue \
+        --connection-string "$AZURE_STORAGE_CONNECTION_STRING" \
+        -o none || echo "Failed to verify queue $queue"
+    done
+
+    # Create S3 bucket in MinIO
+    echo "Creating S3 bucket in MinIO..."
+    AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin aws --endpoint-url http://localhost:9000 s3 mb s3://revelare-vessel-data --region ap-southeast-2 || echo "Bucket already exists or creation failed"
+    
+    # Create audit directory for file-based auditing
+    echo "Creating audit directory..."
+    mkdir -p /tmp/usvpipeline/audit
+      
+    echo "Setup complete! Resources have been created."
+    ;;
+  "reset")
+    echo "Resetting all state..."
+    
+    # Stop existing containers
+    docker-compose down
+    
+    # Remove volume data
+    docker volume rm tools_azurite-data tools_minio-data tools_ftp-data tools_ftp-watch-data || true
+    
+    # Remove audit logs
+    rm -rf /tmp/usvpipeline/audit
+    
+    # Start containers again
+    docker-compose up -d
+    
+    # Wait for services to be ready
+    echo "Waiting for services to restart..."
+    sleep 5
+    
+    # Create resources again
+    echo "Creating Azure resources from scratch..."
+    AZURE_CONN_STRING="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
+    
+    # Create blob container
+    az storage container create \
+      --name usvdata \
+      --connection-string "${AZURE_CONN_STRING}BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;" || true
+    
+    # Create queues
+    for queue in "validation-queue" "transfer-queue" "cleanup-queue"; do
+      az storage queue create \
+        --name $queue \
+        --connection-string "${AZURE_CONN_STRING}QueueEndpoint=http://127.0.0.1:10001/devstoreaccount1;" || true
+    done
+    
+    # Create S3 bucket
+    AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin aws --endpoint-url http://localhost:9000 \
+      s3 mb s3://revelare-vessel-data --region ap-southeast-2 || true
+    
+    # Create audit directory
+    mkdir -p /tmp/usvpipeline/audit
+    
+    echo "All state has been reset!"
+    ;;
+  "ftp-data")
+    echo "Preparing test data for FTP server..."
+    if [ -f "$REPO_ROOT/tools/prepare-ftp-test-data.sh" ]; then
+      bash "$REPO_ROOT/tools/prepare-ftp-test-data.sh"
+    else
+      echo "Error: FTP test data preparation script not found"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Local environment is ready!"
+    echo ""
+    echo "Usage:"
+    echo "  $0             - Just set up the environment"
+    echo "  $0 setup       - Set up environment and create necessary Azure resources"
+    echo "  $0 build       - Set up environment and build the app"
+    echo "  $0 run         - Set up environment, create resources, build and run the app"
+    echo "  $0 reset       - Reset all state (remove containers, volumes, and recreate resources)"
+    echo "  $0 ftp-data    - Prepare and upload test data to the FTP server"
+    ;;
+esac

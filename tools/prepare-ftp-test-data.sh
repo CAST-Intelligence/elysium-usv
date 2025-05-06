@@ -1,81 +1,100 @@
 #!/bin/bash
+# Script to prepare test data for FTP testing
+
 set -e
 
-# Get the repository root directory
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+# Create test directory if it doesn't exist
+TEST_DATA_DIR="../test/mock-data"
+mkdir -p "$TEST_DATA_DIR"
 
-# Display banner
-echo "======================================"
-echo "Elysium USV - Prepare FTP Test Data"
-echo "======================================"
-
-# Check if Docker is running
-if ! docker info > /dev/null 2>&1; then
-  echo "Error: Docker is not running or not accessible"
-  exit 1
-fi
-
-# Check if FTP container is running
-if ! docker ps | grep -q "ftp-server"; then
-  echo "Error: FTP server container is not running. Start it with: tools/local-dev.sh"
-  exit 1
-fi
-
-# Create a temporary directory
-TEMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TEMP_DIR"' EXIT
-
-# Ensure test data directory exists
-TEST_DATA_DIR="$REPO_ROOT/data/test/ekinox"
-if [ ! -d "$TEST_DATA_DIR" ]; then
-  echo "Error: Test data directory not found: $TEST_DATA_DIR"
-  exit 1
-fi
-
-# Create MD5 hash files if they don't already exist
-echo "Creating MD5 hash files for test data..."
-for data_file in "$TEST_DATA_DIR"/*; do
-  # Skip if it's already an MD5 file
-  if [[ "$data_file" == *".md5" ]]; then
-    continue
-  fi
+# Function to create test files
+create_test_files() {
+  echo "Creating test data files..."
   
-  # Create the MD5 hash file if it doesn't exist
-  md5_file="${data_file}.md5"
-  if [ ! -f "$md5_file" ]; then
-    md5sum "$data_file" | awk '{print $1}' > "$md5_file"
-    echo "Created MD5 hash file: $md5_file"
-  fi
-done
+  # Create random data files with vessel IDs
+  for i in {1..3}; do
+    vessel_id=$(printf "%03d" $i)
+    filename="${TEST_DATA_DIR}/vessel${vessel_id}_data_1.bin"
+    
+    # Create 1MB random data file
+    dd if=/dev/urandom of="$filename" bs=1024 count=1024 2>/dev/null
+    
+    # Calculate and save MD5 hash
+    md5_hash=$(md5sum "$filename" | awk '{print $1}')
+    echo "$md5_hash" > "${filename}.md5"
+    
+    echo "Created test file: $filename with MD5: $md5_hash"
+  done
+  
+  # Also create files with EKI format
+  for i in {1..2}; do
+    eki_id=$(printf "%04d" $i)
+    filename="${TEST_DATA_DIR}/data-EKI${eki_id}.bin"
+    
+    # Create 512KB random data file
+    dd if=/dev/urandom of="$filename" bs=1024 count=512 2>/dev/null
+    
+    # Calculate and save MD5 hash
+    md5_hash=$(md5sum "$filename" | awk '{print $1}')
+    echo "$md5_hash" > "${filename}.md5"
+    
+    echo "Created test file: $filename with MD5: $md5_hash"
+  done
+}
 
-# Prepare directory structure to copy to FTP server
-FTP_DATA_DIR="$TEMP_DIR/ftp_data"
-mkdir -p "$FTP_DATA_DIR"
+# Function to start the Docker environment
+start_docker_env() {
+  echo "Starting Docker environment..."
+  docker-compose -f tools/docker-compose.yml up -d
+  echo "Docker environment is running"
+}
 
-# Copy test files to the temporary directory
-echo "Copying test files to temporary directory..."
-cp "$TEST_DATA_DIR"/* "$FTP_DATA_DIR/"
+# Function to check Docker logs
+show_logs() {
+  echo "Showing logs from the FTP data setup container:"
+  docker-compose -f tools/docker-compose.yml logs ftp-data-setup
+}
 
-# Find the FTP server container ID
-FTP_CONTAINER_ID=$(docker ps --filter "name=ftp-server" --format "{{.ID}}")
-if [ -z "$FTP_CONTAINER_ID" ]; then
-  echo "Error: Failed to find FTP server container"
-  exit 1
+# Function to show help
+show_help() {
+  echo "Usage: $0 [OPTION]"
+  echo "Prepare test data for FTP testing"
+  echo ""
+  echo "Options:"
+  echo "  create     Create test data files"
+  echo "  start      Start Docker environment"
+  echo "  logs       Show container logs"
+  echo "  help       Show this help message"
+  echo ""
+  echo "If no option is specified, all steps will be executed in sequence."
+}
+
+# Process command line arguments
+if [ $# -eq 0 ]; then
+  create_test_files
+  start_docker_env
+  sleep 5
+  show_logs
+else
+  case "$1" in
+    create)
+      create_test_files
+      ;;
+    start)
+      start_docker_env
+      ;;
+    logs)
+      show_logs
+      ;;
+    help)
+      show_help
+      ;;
+    *)
+      echo "Unknown option: $1"
+      show_help
+      exit 1
+      ;;
+  esac
 fi
 
-# Copy the files to the FTP server container
-echo "Copying files to FTP server container..."
-docker cp "$FTP_DATA_DIR/." "$FTP_CONTAINER_ID:/home/ftpuser/"
-
-echo "Test data has been prepared and uploaded to the FTP server."
-echo "The following files have been uploaded:"
-ls -la "$FTP_DATA_DIR"
-echo ""
-echo "FTP Server Information:"
-echo "- Host: localhost"
-echo "- Port: 21"
-echo "- Username: ftpuser"
-echo "- Password: ftppass"
-echo ""
-echo "You can now connect to the FTP server and the files will be automatically processed."
+echo "Done"

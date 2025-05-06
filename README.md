@@ -142,6 +142,7 @@ After assessing the requirements and initial prototyping, we have pivoted to usi
 
 ### Key Components:
 - **Worker Pattern Implementation**: Background processing using dedicated workers for each stage
+- **FTP Worker**: Monitors an FTP server for data files with MD5 hash companions
 - **Validation Worker**: Processes blobs for checksum validation and metadata updates
 - **Transfer Worker**: Handles secure transfer of validated data to AWS S3 with verification
 - **Cleanup Worker**: Manages data retention and certified data destruction
@@ -194,6 +195,26 @@ This script:
 - Adds messages to the validation queue for processing
 - Includes a test file with an invalid checksum for validation testing
 
+### Testing with FTP Data
+To test the FTP data source functionality:
+
+```bash
+cd tools
+./prepare-ftp-test-data.sh
+```
+
+This script:
+- Creates test data files with vessel IDs in different formats
+- Calculates MD5 checksums for each file
+- Starts the local FTP server with Docker
+- Uploads test data to the FTP server
+- The FTP worker will then:
+  - Connect to the FTP server
+  - Download data files and their MD5 hash companions
+  - Validate the files using MD5 checksums
+  - Upload valid files to Azure Blob Storage
+  - Queue them for further validation
+
 ### Deployment
 Deploy to Azure App Service using the following steps:
 
@@ -218,7 +239,14 @@ az webapp config appsettings set --resource-group your-resource-group --name ely
   AWS_SECRET_ACCESS_KEY="your_aws_secret_key" \
   AWS_REGION="ap-southeast-2" \
   AWS_BUCKET_NAME="revelare-vessel-data" \
-  ENVIRONMENT="production"
+  ENVIRONMENT="production" \
+  FTP_WATCH_ENABLED="true" \
+  FTP_HOST="your_ftp_server" \
+  FTP_PORT="21" \
+  FTP_USER="your_ftp_user" \
+  FTP_PASSWORD="your_ftp_password" \
+  FTP_WATCH_DIR="/path/to/watch/directory" \
+  FTP_POLL_INTERVAL="60s"
 ```
 
 Note: For production deployments, consider using Azure Key Vault for secret management instead of environment variables.

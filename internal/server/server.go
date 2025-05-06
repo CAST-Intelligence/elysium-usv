@@ -20,6 +20,8 @@ var (
 	validationWorker WorkerStatus
 	transferWorker   WorkerStatus
 	cleanupWorker    WorkerStatus
+	ftpWorker        WorkerStatus
+	additionalWorkers []WorkerStatus
 )
 
 // New creates a new HTTP server with the given configuration
@@ -41,10 +43,38 @@ func New(cfg *config.Config) *http.Server {
 }
 
 // RegisterWorkerStatusEndpoints registers worker status objects with the server
-func RegisterWorkerStatusEndpoints(srv *http.Server, vw, tw, cw WorkerStatus) {
-	validationWorker = vw
-	transferWorker = tw
-	cleanupWorker = cw
+func RegisterWorkerStatusEndpoints(srv *http.Server, workers ...WorkerStatus) {
+	// Clear additionalWorkers slice
+	additionalWorkers = nil
+	
+	// Ensure we have at least the three main workers
+	if len(workers) >= 3 {
+		validationWorker = workers[0]
+		transferWorker = workers[1]
+		cleanupWorker = workers[2]
+		
+		// If there's an FTP worker (4th worker), register it
+		if len(workers) >= 4 {
+			ftpWorker = workers[3]
+		}
+		
+		// Register any additional workers beyond the standard ones
+		if len(workers) > 4 {
+			additionalWorkers = workers[4:]
+		}
+	} else {
+		// Handle the case where we have fewer than 3 workers
+		for i, w := range workers {
+			switch i {
+			case 0:
+				validationWorker = w
+			case 1:
+				transferWorker = w
+			case 2:
+				cleanupWorker = w
+			}
+		}
+	}
 }
 
 // registerRoutes registers the HTTP routes
@@ -68,8 +98,15 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	// Check worker health
 	isHealthy := true
 	if validationWorker != nil && transferWorker != nil && cleanupWorker != nil {
+		// Create a list of all active workers
+		workers := []WorkerStatus{validationWorker, transferWorker, cleanupWorker}
+		if ftpWorker != nil {
+			workers = append(workers, ftpWorker)
+		}
+		workers = append(workers, additionalWorkers...)
+		
 		// If any worker has "error" in its status, consider the system unhealthy
-		for _, worker := range []WorkerStatus{validationWorker, transferWorker, cleanupWorker} {
+		for _, worker := range workers {
 			if status := worker.Status(); len(status) >= 5 && status[:5] == "error" {
 				isHealthy = false
 				break
@@ -105,15 +142,23 @@ func versionHandler(w http.ResponseWriter, r *http.Request) {
 // statusHandler returns the pipeline status
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	// Create a dynamic status response based on actual worker status
+	pipelineStatus := map[string]interface{}{
+		"validation_worker": getWorkerStatus(validationWorker),
+		"transfer_worker":   getWorkerStatus(transferWorker),
+		"cleanup_worker":    getWorkerStatus(cleanupWorker),
+		"last_validated":    formatLastRun(validationWorker),
+		"last_transferred":  formatLastRun(transferWorker),
+		"last_cleaned":      formatLastRun(cleanupWorker),
+	}
+	
+	// Add FTP worker status if available
+	if ftpWorker != nil {
+		pipelineStatus["ftp_worker"] = getWorkerStatus(ftpWorker)
+		pipelineStatus["last_ftp_check"] = formatLastRun(ftpWorker)
+	}
+	
 	status := map[string]interface{}{
-		"pipeline_status": map[string]interface{}{
-			"validation_worker": getWorkerStatus(validationWorker),
-			"transfer_worker":   getWorkerStatus(transferWorker),
-			"cleanup_worker":    getWorkerStatus(cleanupWorker),
-			"last_validated":    formatLastRun(validationWorker),
-			"last_transferred":  formatLastRun(transferWorker),
-			"last_cleaned":      formatLastRun(cleanupWorker),
-		},
+		"pipeline_status": pipelineStatus,
 	}
 
 	// Marshal to JSON
@@ -130,21 +175,31 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 
 // workersHandler returns detailed worker status
 func workersHandler(w http.ResponseWriter, r *http.Request) {
-	workers := map[string]interface{}{
-		"workers": map[string]interface{}{
-			"validation": map[string]string{
-				"status":   getWorkerStatus(validationWorker),
-				"last_run": formatLastRun(validationWorker),
-			},
-			"transfer": map[string]string{
-				"status":   getWorkerStatus(transferWorker),
-				"last_run": formatLastRun(transferWorker),
-			},
-			"cleanup": map[string]string{
-				"status":   getWorkerStatus(cleanupWorker),
-				"last_run": formatLastRun(cleanupWorker),
-			},
+	workersMap := map[string]interface{}{
+		"validation": map[string]string{
+			"status":   getWorkerStatus(validationWorker),
+			"last_run": formatLastRun(validationWorker),
 		},
+		"transfer": map[string]string{
+			"status":   getWorkerStatus(transferWorker),
+			"last_run": formatLastRun(transferWorker),
+		},
+		"cleanup": map[string]string{
+			"status":   getWorkerStatus(cleanupWorker),
+			"last_run": formatLastRun(cleanupWorker),
+		},
+	}
+	
+	// Add FTP worker if available
+	if ftpWorker != nil {
+		workersMap["ftp"] = map[string]string{
+			"status":   getWorkerStatus(ftpWorker),
+			"last_run": formatLastRun(ftpWorker),
+		}
+	}
+	
+	workers := map[string]interface{}{
+		"workers": workersMap,
 	}
 
 	// Marshal to JSON

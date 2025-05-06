@@ -56,6 +56,14 @@ func main() {
 	validationWorker := worker.NewValidationWorker(cfg, azureClient.BlobClient, azureClient.QueueClient)
 	transferWorker := worker.NewTransferWorker(cfg, azureClient.BlobClient, azureClient.QueueClient, s3Client)
 	cleanupWorker := worker.NewCleanupWorker(cfg, azureClient.BlobClient, azureClient.QueueClient)
+	
+	// Initialize FTP worker if enabled
+	var ftpWorker *worker.FTPWorker
+	if cfg.FTPWatchEnabled {
+		log.Printf("FTP watching enabled, directory: %s", cfg.FTPWatchDir)
+		ftpWorker = worker.NewFTPWorker(cfg, azureClient.BlobClient, azureClient.QueueClient)
+	}
+	
 	log.Println("Workers initialized successfully")
 
 	// Start workers
@@ -65,19 +73,30 @@ func main() {
 	transferWorker.Start()
 	log.Println("Starting cleanup worker...")
 	cleanupWorker.Start()
+	
+	// Start FTP worker if enabled
+	if ftpWorker != nil {
+		log.Println("Starting FTP worker...")
+		ftpWorker.Start()
+	}
+	
 	log.Println("All workers started successfully")
 
 	// Create and enhance server with worker status
 	log.Println("Initializing HTTP server...")
 	srv := server.New(cfg)
-	server.RegisterWorkerStatusEndpoints(srv, validationWorker, transferWorker, cleanupWorker)
+	if ftpWorker != nil {
+		server.RegisterWorkerStatusEndpoints(srv, validationWorker, transferWorker, cleanupWorker, ftpWorker)
+	} else {
+		server.RegisterWorkerStatusEndpoints(srv, validationWorker, transferWorker, cleanupWorker)
+	}
 	log.Printf("HTTP server initialized on port %d", cfg.Port)
 	
 	// Start the server
 	go startServer(srv, cfg)
 
-	// Handle graceful shutdown
-	handleGracefulShutdown(ctx, srv, cfg, []shutdownTask{
+	// Prepare shutdown tasks
+	shutdownTasks := []shutdownTask{
 		{
 			name: "validation worker",
 			stop: validationWorker.Stop,
@@ -90,7 +109,18 @@ func main() {
 			name: "cleanup worker",
 			stop: cleanupWorker.Stop,
 		},
-	})
+	}
+	
+	// Add FTP worker to shutdown tasks if enabled
+	if ftpWorker != nil {
+		shutdownTasks = append(shutdownTasks, shutdownTask{
+			name: "ftp worker",
+			stop: ftpWorker.Stop,
+		})
+	}
+	
+	// Handle graceful shutdown
+	handleGracefulShutdown(ctx, srv, cfg, shutdownTasks)
 }
 
 // shutdownTask represents a task to be executed during shutdown
