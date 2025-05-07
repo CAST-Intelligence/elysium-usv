@@ -3,56 +3,38 @@
 
 set -e
 
-# Create test directory if it doesn't exist
+# Define directories
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 TEST_DATA_DIR="../test/mock-data"
 mkdir -p "$TEST_DATA_DIR"
 
-# Function to create test files
+# Function to create test files using the Python script
 create_test_files() {
-  echo "Creating test data files..."
-  
-  # Create random data files with vessel IDs
-  for i in {1..3}; do
-    vessel_id=$(printf "%03d" $i)
-    filename="${TEST_DATA_DIR}/vessel${vessel_id}_data_1.bin"
-    
-    # Create 1MB random data file
-    dd if=/dev/urandom of="$filename" bs=1024 count=1024 2>/dev/null
-    
-    # Calculate and save MD5 hash
-    md5_hash=$(md5sum "$filename" | awk '{print $1}')
-    echo "$md5_hash" > "${filename}.md5"
-    
-    echo "Created test file: $filename with MD5: $md5_hash"
-  done
-  
-  # Also create files with EKI format
-  for i in {1..2}; do
-    eki_id=$(printf "%04d" $i)
-    filename="${TEST_DATA_DIR}/data-EKI${eki_id}.bin"
-    
-    # Create 512KB random data file
-    dd if=/dev/urandom of="$filename" bs=1024 count=512 2>/dev/null
-    
-    # Calculate and save MD5 hash
-    md5_hash=$(md5sum "$filename" | awk '{print $1}')
-    echo "$md5_hash" > "${filename}.md5"
-    
-    echo "Created test file: $filename with MD5: $md5_hash"
-  done
+  echo "Creating test data files using Python..."
+  python3 "$SCRIPT_DIR/ftp_uploader.py" --create-test-data --dir "$TEST_DATA_DIR"
 }
 
 # Function to start the Docker environment
 start_docker_env() {
   echo "Starting Docker environment..."
-  docker-compose -f tools/docker-compose.yml up -d
+  docker-compose -f "$SCRIPT_DIR/docker-compose.yml" up -d ftp-server azurite minio minio-setup azure-setup
   echo "Docker environment is running"
+  
+  # Wait for FTP server to be ready
+  echo "Waiting for FTP server to be ready..."
+  sleep 10
+}
+
+# Function to upload files to FTP using Python script
+upload_to_ftp() {
+  echo "Uploading files to FTP server using Python..."
+  python3 "$SCRIPT_DIR/ftp_uploader.py" --dir "$TEST_DATA_DIR" --remote-dir "/upload"
 }
 
 # Function to check Docker logs
 show_logs() {
-  echo "Showing logs from the FTP data setup container:"
-  docker-compose -f tools/docker-compose.yml logs ftp-data-setup
+  echo "Showing logs from the FTP server container:"
+  docker-compose -f "$SCRIPT_DIR/docker-compose.yml" logs ftp-server
 }
 
 # Function to show help
@@ -63,6 +45,7 @@ show_help() {
   echo "Options:"
   echo "  create     Create test data files"
   echo "  start      Start Docker environment"
+  echo "  upload     Upload files to FTP server using Python"
   echo "  logs       Show container logs"
   echo "  help       Show this help message"
   echo ""
@@ -73,7 +56,7 @@ show_help() {
 if [ $# -eq 0 ]; then
   create_test_files
   start_docker_env
-  sleep 5
+  upload_to_ftp
   show_logs
 else
   case "$1" in
@@ -82,6 +65,9 @@ else
       ;;
     start)
       start_docker_env
+      ;;
+    upload)
+      upload_to_ftp
       ;;
     logs)
       show_logs
