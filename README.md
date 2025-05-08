@@ -206,7 +206,7 @@ cd tools
 This script:
 - Creates test data files with vessel IDs in different formats
 - Calculates MD5 checksums for each file
-- Starts the local FTP server with Docker
+- Starts the local FTP server with Docker (uses delfer/alpine-ftp-server)
 - Uploads test data to the FTP server using Python
 - The FTP worker will then:
   - Connect to the FTP server
@@ -248,11 +248,11 @@ The FTP server is accessible at:
 - Port: 21
 - Username: ftpuser
 - Password: ftppass
-- Files uploaded to: /upload directory
+- Files uploaded to: upload directory (relative to user's home directory)
 
 To test the system with your own files, use the `ftp_uploader.py` script directly:
 ```bash
-python3 ./tools/ftp_uploader.py --file /path/to/your/file.bin --remote-dir /upload
+python3 ./tools/ftp_uploader.py --file /path/to/your/file.bin --remote-dir upload
 ```
 
 ### Deployment
