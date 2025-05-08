@@ -36,11 +36,18 @@ def calculate_md5(file_path):
 def upload_file(ftp, local_file, remote_dir):
     """Upload a single file to the FTP server."""
     filename = os.path.basename(local_file)
+    
+    # Handle remote directory formatting
+    if remote_dir.startswith('/'):
+        remote_dir = remote_dir[1:]  # Remove leading slash
+    
     remote_path = f"{remote_dir}/{filename}"
     
     # Upload the file
     with open(local_file, "rb") as file:
         logger.info(f"Uploading {filename} to {remote_path}")
+        # Enable passive mode with extended range
+        ftp.set_pasv(True)
         ftp.storbinary(f"STOR {remote_path}", file)
         logger.info(f"Successfully uploaded {filename}")
     
@@ -55,8 +62,9 @@ def upload_file(ftp, local_file, remote_dir):
     
     # Upload MD5 file
     with open(md5_path, "rb") as md5_file:
-        logger.info(f"Uploading {md5_filename} to {remote_dir}/{md5_filename}")
-        ftp.storbinary(f"STOR {remote_dir}/{md5_filename}", md5_file)
+        md5_remote_path = f"{remote_dir}/{md5_filename}"
+        logger.info(f"Uploading {md5_filename} to {md5_remote_path}")
+        ftp.storbinary(f"STOR {md5_remote_path}", md5_file)
         logger.info(f"Successfully uploaded {md5_filename}")
     
     # Clean up temporary MD5 file if it was created
@@ -68,13 +76,27 @@ def upload_directory(ftp, local_dir, remote_dir, pattern="*.bin"):
     """Upload all files matching pattern in a directory to the FTP server."""
     uploaded_count = 0
     
-    # Create the remote directory if it doesn't exist
-    try:
-        ftp.mkd(remote_dir)
-        logger.info(f"Created remote directory: {remote_dir}")
-    except ftplib.error_perm:
-        # Directory probably already exists
-        pass
+    # List directories to check if we're in the home directory
+    logger.debug(f"Current directory: {ftp.pwd()}")
+    logger.debug(f"Directory listing: {ftp.nlst()}")
+    
+    # Create the remote directory structure
+    if remote_dir.startswith('/'):
+        # Remove leading slash for relative paths
+        remote_dir = remote_dir[1:]
+    
+    # Create each directory in the path if needed
+    parts = remote_dir.split('/')
+    current_dir = ""
+    for part in parts:
+        if part:
+            try:
+                current_dir = current_dir + "/" + part if current_dir else part
+                logger.debug(f"Trying to create directory: {current_dir}")
+                ftp.mkd(current_dir)
+                logger.info(f"Created remote directory: {current_dir}")
+            except ftplib.error_perm as e:
+                logger.debug(f"Directory probably exists: {e}")
     
     # Loop through all files in the directory matching the pattern
     for file_path in Path(local_dir).glob(pattern):
@@ -96,12 +118,19 @@ def main():
     parser.add_argument("--password", default="ftppass", help="FTP password")
     parser.add_argument("--remote-dir", default="/upload", help="Remote directory")
     parser.add_argument("--create-test-data", action="store_true", help="Create test data files")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--file", help="Specific file to upload")
     group.add_argument("--dir", help="Directory containing files to upload")
     
     args = parser.parse_args()
+    
+    # Set logging level based on verbose flag
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+        # Enable FTP debugging
+        ftplib.FTP.debugging = 2
     
     # Create test data if requested
     if args.create_test_data:
@@ -151,8 +180,20 @@ def main():
         # Connect to the FTP server
         logger.info(f"Connecting to FTP server at {args.host}:{args.port}")
         ftp = ftplib.FTP()
-        ftp.connect(args.host, args.port)
-        ftp.login(args.user, args.password)
+        try:
+            ftp.connect(args.host, args.port)
+            logger.debug("FTP connect successful")
+        except Exception as e:
+            logger.error(f"FTP connect error: {e}")
+            raise
+        
+        try:
+            ftp.login(args.user, args.password)
+            logger.debug("FTP login successful")
+        except Exception as e:
+            logger.error(f"FTP login error: {e}")
+            raise
+            
         logger.info(f"Successfully connected to FTP server")
         
         # Upload file(s)

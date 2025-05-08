@@ -34,7 +34,7 @@ ftp.retrlines('LIST')
 # List upload directory
 try:
     print('\nUpload directory contents:')
-    ftp.cwd('/upload')
+    ftp.cwd('upload')
     ftp.retrlines('LIST')
 except Exception as e:
     print(f'Error accessing upload directory: {e}')

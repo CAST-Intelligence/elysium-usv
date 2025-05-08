@@ -207,13 +207,53 @@ This script:
 - Creates test data files with vessel IDs in different formats
 - Calculates MD5 checksums for each file
 - Starts the local FTP server with Docker
-- Uploads test data to the FTP server
+- Uploads test data to the FTP server using Python
 - The FTP worker will then:
   - Connect to the FTP server
   - Download data files and their MD5 hash companions
   - Validate the files using MD5 checksums
   - Upload valid files to Azure Blob Storage
   - Queue them for further validation
+
+#### FTP Testing Step by Step
+
+You can also run each step of the FTP testing process separately:
+
+1. **Create test data files**:
+   ```bash
+   ./tools/prepare-ftp-test-data.sh create
+   ```
+   This generates test binary files in `../test/mock-data` using Python.
+
+2. **Start the Docker environment**:
+   ```bash
+   ./tools/prepare-ftp-test-data.sh start
+   ```
+   This starts the FTP server and other services via Docker Compose.
+
+3. **Upload files to FTP server**:
+   ```bash
+   ./tools/prepare-ftp-test-data.sh upload
+   ```
+   This uploads the test files to the FTP server using the Python-based uploader.
+
+4. **Verify the upload manually**:
+   ```bash
+   ./tools/test_ftp_uploader.sh
+   ```
+   This runs all steps (create, start, upload) and verifies the upload by listing the FTP contents.
+
+The FTP server is accessible at:
+- Host: localhost
+- Port: 21
+- Username: ftpuser
+- Password: ftppass
+- Files uploaded to: /upload directory
+
+To test the system with your own files, use the `ftp_uploader.py` script directly:
+```bash
+python3 ./tools/ftp_uploader.py --file /path/to/your/file.bin --remote-dir /upload
+```
 
 ### Deployment
 Deploy to Azure App Service using the following steps:

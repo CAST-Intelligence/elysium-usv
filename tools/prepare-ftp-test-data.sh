@@ -28,7 +28,7 @@ start_docker_env() {
 # Function to upload files to FTP using Python script
 upload_to_ftp() {
   echo "Uploading files to FTP server using Python..."
-  python3 "$SCRIPT_DIR/ftp_uploader.py" --dir "$TEST_DATA_DIR" --remote-dir "/upload"
+  python3 "$SCRIPT_DIR/ftp_uploader.py" --dir "$TEST_DATA_DIR" --remote-dir "upload"
 }
 
 # Function to check Docker logs
