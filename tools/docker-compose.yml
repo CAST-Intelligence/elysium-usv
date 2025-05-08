@@ -1,4 +1,3 @@
-version: '3'
 services:
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:latest
@@ -74,9 +73,6 @@ services:
       timeout: 5s
       retries: 3
 
-  # We no longer need the ftp-data-setup container
-  # Files are now uploaded using the ftp_uploader.py script
-
   # Initialize Azure Storage
   azure-setup:
     image: mcr.microsoft.com/azure-cli:latest
@@ -85,16 +81,16 @@ services:
     environment:
       AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;QueueEndpoint=http://azurite:10001/devstoreaccount1;"
     entrypoint: >
-      /bin/bash -c "
-      echo 'Waiting for Azurite to start...';
+      /bin/bash -c '
+      echo "Waiting for Azurite to start...";
       sleep 10;
-      echo 'Creating blob container and queues...';
-      az storage container create --name usvdata --connection-string \"$AZURE_STORAGE_CONNECTION_STRING\";
-      az storage queue create --name validation-queue --connection-string \"$AZURE_STORAGE_CONNECTION_STRING\";
-      az storage queue create --name transfer-queue --connection-string \"$AZURE_STORAGE_CONNECTION_STRING\";
-      az storage queue create --name cleanup-queue --connection-string \"$AZURE_STORAGE_CONNECTION_STRING\";
-      echo 'Azure storage setup completed';
-      "
+      echo "Creating blob container and queues...";
+      az storage container create --name usvdata --connection-string "$AZURE_STORAGE_CONNECTION_STRING";
+      az storage queue create --name validation-queue --connection-string "$AZURE_STORAGE_CONNECTION_STRING";
+      az storage queue create --name transfer-queue --connection-string "$AZURE_STORAGE_CONNECTION_STRING";
+      az storage queue create --name cleanup-queue --connection-string "$AZURE_STORAGE_CONNECTION_STRING";
+      echo "Azure storage setup completed";
+      '
     networks:
       - elysium-network
 
