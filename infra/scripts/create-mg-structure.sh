@@ -67,7 +67,7 @@ log() {
     "INFO")
       echo -e "${BLUE}[INFO] $message${NC}"
       ;;
-    "SUCCESS")
+  c  "SUCCESS")
       echo -e "${GREEN}[SUCCESS] $message${NC}"
       ;;
     "WARN")
@@ -171,19 +171,10 @@ SECURITY_MG="${PREFIX}SECURITY"
 create_management_group "$MONITOR_MG" "USV Test Monitoring" "$SHARED_MG"
 create_management_group "$SECURITY_MG" "USV Test Security" "$SHARED_MG"
 
-# Get the current subscription and move it to the test management group
-log "INFO" "Moving current subscription to test management group..."
-SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-
-if [[ -n "$SUBSCRIPTION_ID" ]]; then
-  if az account management-group subscription add --name "$TEST_MG" --subscription "$SUBSCRIPTION_ID"; then
-    log "SUCCESS" "Subscription $SUBSCRIPTION_ID moved to $TEST_MG successfully."
-  else
-    log "ERROR" "Failed to move subscription to $TEST_MG."
-  fi
-else
-  log "ERROR" "Could not determine current subscription ID."
-fi
+# We don't automatically move subscriptions - they should remain at the root level
+# unless explicitly moved by the admin for specific governance reasons
+log "INFO" "Management group hierarchy created. Subscriptions remain at tenant root level."
+log "INFO" "To move subscriptions manually, use: az account management-group subscription add --name <management-group> --subscription <subscription-id>"
 
 log "SUCCESS" "Management group structure created successfully\!"
 echo
